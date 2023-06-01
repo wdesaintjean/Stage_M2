@@ -1,0 +1,1686 @@
+---
+title: "corces_acly_analysis_01062023"
+author: "wd"
+date: '2023-03-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+#install.packages("ggtext")
+library(ggtext)
+#install.packages("corrplot")
+library(corrplot)
+#install.packages("circlize")
+library(circlize)
+#install.packages("viridis")
+#install.packages("ggrepel")
+library(ggrepel)
+library(viridis)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#BiocManager::install("ComplexHeatmap")
+#BiocManager::install("Hmisc")
+
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(Hmisc)
+
+if (!require(devtools)) install.packages("devtools")
+devtools::install_github("gaospecial/ggVennDiagram")
+library("ggVennDiagram")
+
+#BiocManager::install("BiocParallel")
+library(BiocParallel)
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+```
+
+# Data importation 
+
+Analyse des données de la publication corces:
+https://sci-hub.hkvisa.net/10.1038/ng.3646 
+
+```{r data_import}
+
+##import comptages
+corces <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/Corces_HTseq_All_genes_raw.tsv") %>% column_to_rownames("Gene_ID")
+
+##import metadata
+
+metadata_corces <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/Corces_Clinical_runtable_modified.txt") %>%
+  column_to_rownames("Sample_ID")
+
+genecode_gtf <- read_delim("C:/Users/william desaintjean/Documents/Gencode_v33_allgenes_names_corresp.txt",col_names=FALSE) %>% column_to_rownames("X1")
+genecode_gtf <- genecode_gtf[-1,] 
+
+#test_inter<-intersect(rownames(genecode_gtf), rownames(corces))
+#Tous les rownames intersect bien
+
+corces_v2 <- merge(genecode_gtf,corces,by = 'row.names', all = FALSE)
+corces_v2  <- corces_v2 [,-1] 
+corces_v2  <- corces_v2 [,-2] 
+
+#table(duplicated(corces_v2$X2)) 
+#FALSE  TRUE 
+#60583    79 
+
+#i <- colnames(corces_v2) 
+#corces_v2[ , i] <- apply(corces_v2[ , i], 2,function(x) as.integer(x))
+
+#sum
+corces_v2<- aggregate( x= corces_v2[,2:82] ,by= list(corces_v2$X2),FUN=sum)
+
+#supression des doublons
+#corces_v2 <-  distinct(corces_v2,X2, .keep_all = TRUE)  #pour l'instant: supression des doublons de nomde gènes, voir pour addition
+
+rownames(corces_v2) <- corces_v2$Group.1
+corces_v2 <- corces_v2[,-1]
+
+
+inter_data<-intersect(colnames(corces_v2),rownames(metadata_corces))
+
+
+```
+
+
+# General review of cell types in the data Corces {.tabset}
+
+```{r}
+
+
+vec_cell <-c("Blast","LSC","CLP","Ery","LMPP","CMP" ,"GMP","HSC","MEP","MPP","Bcell","CD4Tcell","CD8Tcell","Mono","NKcell","pHSC")
+
+
+metadata_corces$cell_subtype <-  factor(metadata_corces$cell_subtype, levels =c("Blast","LSC","CLP","Ery","LMPP","CMP" ,"GMP","HSC","MEP","MPP","Bcell","CD4Tcell","CD8Tcell","Mono","NKcell","pHSC"))
+
+```
+
+
+
+
+
+```{r 16_subtypes_dds}
+
+data_deseq <- corces_v2[,inter_data]
+meta_deseq <- metadata_corces[inter_data,]
+
+dds_sub <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ cell_subtype )
+
+# filtration
+keep <- rowSums(counts(dds_sub)) >= 10
+dds_sub<- dds_sub[keep,]
+
+dds_sub <- DESeq(dds_sub)
+```
+
+
+```{r}
+
+resultsNames(dds_sub)
+```
+
+
+```{r}
+res_sub <- lfcShrink(dds_sub, coef=2, type="apeglm")
+
+res_sub["ACLY",5]
+res_sub["ACLY",]
+```
+
+
+```{r boxplot_16_subtypes}
+# boxplot avec vst
+matrix_subtype <-getVarianceStabilizedData(dds_sub)
+
+df_acly_subtype=data.frame(matrix_subtype["ACLY",],meta_deseq[,"cell_subtype"])
+
+ggplot(df_acly_subtype, aes(x=df_acly_subtype[,2], y=df_acly_subtype[,1],fill=df_acly_subtype[,2])) + 
+  geom_boxplot() +
+  scale_x_discrete(limits=c("HSC","MPP","LMPP","CMP","GMP","MEP","Mono","Ery","CLP","CD4Tcell","CD8Tcell","Bcell","NKcell","Blast","LSC","pHSC")) +
+  scale_fill_manual(values=c("orchid2","#F8766D","dodgerblue3","navyblue","skyblue1","tan1","tomato4","darkorange1","darkgreen","darkcyan","#E69F00","red1","firebrick3","springgreen3","purple4","forestgreen")) +
+  geom_jitter(width = 0.3) +
+  theme(axis.text=element_text(size=6)) +
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12)) +
+  theme(legend.title=element_text(size=10), legend.text=element_text(size=8)) +
+  theme(axis.text.x = element_markdown(face="bold",size=10,color= c("lightgreen","lightgreen","lightgreen","lightgreen","lightgreen","lightgreen",
+  "lightgreen","lightgreen","lightblue","lightblue","lightblue","lightblue",
+  "lightblue","#fde725","#fde725","#fde725"))) +
+  labs(title = "Boxplot of vst nomalized count", 
+       x = "Cell type", y = "DESEQ VST", fill = "Cell type")
+
+```
+
+
+
+# DESEQ Corces analysis
+
+## AML vs Normal (2cat)
+
+
+```{r}
+metadata_corces$cell_type_2cat <-  factor(metadata_corces$cell_type_2cat, levels = c("Normal", "AML"))
+```
+
+```{r DESEQ2_shrink }
+
+data_deseq <- corces_v2[,inter_data]
+meta_deseq <- metadata_corces[inter_data,]
+
+dds_2cat <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ cell_type_2cat )
+
+# filtration
+keep <- rowSums(counts(dds_2cat)) >= 10
+dds_2cat <- dds_2cat[keep,]
+
+
+# normalisation median of ratios method
+
+dds_2cat <- DESeq(dds_2cat)
+resLFC <- lfcShrink(dds_2cat, coef=2, type="apeglm")
+resLFC
+
+```
+
+```{r Normalisation}
+
+#normalisation vst
+matrix_vst<-getVarianceStabilizedData(dds_2cat)
+
+df_acly_vst=data.frame(matrix_vst["ACLY",],meta_deseq$cell_type_2cat)
+
+```
+
+```{r etude de acly}
+resLFC["ACLY",]
+```
+
+```{r volcanoplot_shrink}
+dfres_shrink=data.frame(resLFC)
+ggplot(data=dfres_shrink, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(colour = factor(padj<0.05))) +
+  custom_theme +
+   theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12)) +
+  labs(title = "Differential expression analysis between AML and Normal with DESEQ2", 
+       x = "Log2 FC (apeglm)", y = "-log10 (padj) ")
+```
+
+```{r boxplot Normal_vs_AML vst}
+
+ggplot(df_acly_vst, aes(x=df_acly_vst[,2], y=df_acly_vst[,1],fill=df_acly_vst[,2])) + 
+  geom_boxplot() +
+  scale_fill_manual(values=c("#3b528b","#fde725")) +
+  #scale_fill_brewer(palette="viridis") +
+  scale_x_discrete(limits=c("Normal","AML")) +
+  geom_jitter(width = 0.1) +
+  labs(title = "Boxplot of counts for ACLY (AML vs Normal)", 
+       x = "", y = "DESEQ VST", fill= "Subject")
+```
+ACLY exprimé différentiellement (padj= 0.0401704) entre les personnes atteintes d'AML et les non malades. 
+Selon le boxplot, on peut émettre l'hypothèse qu'il serait moins exprimé chez les personnes leucémiques. 
+
+## AML vs NormalBM (4cat)
+
+
+```{r}
+metadata_corces$cell_type_4cat_BMPB <-  factor(metadata_corces$cell_type_4cat_BMPB, 
+                                               levels = c("Normal_BM","Normal_PB","pHSC", "AML"))
+```
+
+```{r DESEQ2_4cat }
+
+data_deseq <- corces_v2[,inter_data]
+meta_deseq <- metadata_corces[inter_data,]
+
+dds_4cat <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ cell_type_4cat_BMPB )
+
+# filtration
+keep <- rowSums(counts(dds_4cat)) >= 10
+dds_4cat <- dds_4cat[keep,]
+dds_4cat <- DESeq(dds_4cat)
+
+res_4cat <- lfcShrink(dds_4cat, coef="cell_type_4cat_BMPB_AML_vs_Normal_BM", type="apeglm")
+res_4cat
+
+
+```
+
+```{r volcanoplot_4cat}
+
+dfres_shrink=data.frame(res_4cat)
+ggplot(data=dfres_shrink, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(colour = factor(padj<0.05))) +
+  custom_theme +
+   theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12)) +
+  labs(title = "Volcanoplot of differential expression analysis with DESEQ2 (vst)", 
+       x = "Log2 FoldChange", y = "-log10 (padj) ")
+```
+```{r etude de acly 4cat}
+res_4cat["ACLY",]
+```
+```{r}
+df_acly_vst <- cbind(df_acly_vst, metadata_corces$cell_type_4cat_BMPB)
+```
+
+```{r boxplot 4_cat}
+
+ggplot(df_acly_vst, aes(x=df_acly_vst[,3], y=df_acly_vst[,1],fill=df_acly_vst[,3])) + 
+  geom_boxplot() +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  scale_x_discrete(limits=c("Normal_BM","Normal_PB","pHSC","AML")) +
+  geom_jitter(width = 0.1) +
+  labs(title = "Boxplot of counts for ACLY in vst normalized matrix", 
+       x = "", y = "DESEQ VST", fill= "Subject")
+```
+
+```{r boxplot 4_cat_v2}
+
+ggplot(df_acly_vst, aes(x=df_acly_vst[,3], y=df_acly_vst[,1],fill=df_acly_vst[,3])) + 
+  geom_boxplot() +
+  scale_fill_manual(values=c("#fde725","#3b528b","black", "black")) +
+  #scale_fill_brewer(palette="viridis") +
+  scale_x_discrete(limits=c("Normal_BM","AML")) +
+  geom_jitter(width = 0.1) +
+  labs(title = "Boxplot of counts for ACLY (AML vs NormalBM)", 
+       x = "", y = "DESEQ VST", fill= "Subject")
+```
+ACLY exprimé différentiellemententre ces 2 sous groupes (padj= 0.0159897). 
+Selon le boxplot, on peut encore une fois émettre l'hypothèse que ce gène serait moins exprimé chez les personnes leucémiques.
+
+## Subtype Where ACLY is most expressed vs all
+
+```{r}
+resultsNames(dds_sub)
+#res_subtype <-results(dds_sub, contrast=c("cell_subtype","MEP","Blast"))
+#res_subtype
+```
+
+ADD BOXPLOT AND VOLCANOPLOT
+pas nécessaire, à revoir avec vincent
+
+```{r}
+df_acly_vst=data.frame(matrix_vst["ACLY",],meta_deseq$cell_type_2cat,meta_deseq$cell_type_5cat, meta_deseq$cell_type_4cat_BMPB)
+```
+
+
+# Corrélation with ACLY gene in Corces
+
+```{r}
+seuil_cor<-0.75
+```
+
+## ACLY Corrélation analysis in all samples 
+
+### Graph of correlation between ACLY and others genes in all samples
+```{r gènes cor avec ACLY}
+vec_cor<-cor(x= t(matrix_vst), y= matrix_vst['ACLY',])
+vec_cor<-as.data.frame(vec_cor)
+
+find_pval_cor <- function(vec_nom_genes, matrix_count){
+  vec_final=c()
+  for(i in vec_nom_genes) {
+    vec_final <- append(vec_final, cor.test(matrix_count["ACLY",], y= matrix_count[i,])$p.value)
+   }
+  return(vec_final)
+}
+
+pval_all<-find_pval_cor(row.names(matrix_vst), matrix_vst)
+vec_cor= cbind(vec_cor,pval_all )
+
+vec_cor<- vec_cor[order(- vec_cor[,1] ), , drop= FALSE]
+
+```
+
+
+
+```{r graphe_cor_total}
+
+vec_top_corr<- rownames(subset(vec_cor, vec_cor$V1 >= seuil_cor | vec_cor$V1<=(seuil_cor*-1)))
+
+vec_cor= cbind(vec_cor,is.element(rownames(vec_cor),vec_top_corr))
+
+dat <- subset(vec_cor)
+dat$lab <- ""
+ix_label <- vec_cor$`is.element(rownames(vec_cor), vec_top_corr)`== TRUE   
+dat$lab[ix_label] <- rownames(dat)[ix_label]
+
+
+
+ggplot(data=dat, aes(x = dat[,1], y =  -log10(dat[,2]),label = lab)) +
+  #geom_jitter(width = 0.03,color = ifelse(dat$lab == "", "blue", "red"))+
+  geom_text_repel(max.overlaps = Inf) +
+  geom_point(color = ifelse(dat$lab == "", "blue", "red")) +
+  #geom_text_repel(direction="y",box.padding = 4, max.overlaps = Inf,segment.color="yellow") +
+  labs(title = "Graph of correlation between ACLY and other genes (all sample)", 
+       x = "R coefficient", y = "-log10 p-val corr test") +
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12)) 
+
+```
+
+
+
+### Heat map ot most correlate and anti-correlate genes to ACLY in all samples
+```{r normalisation z-score}
+matrix_z <- scale(t(matrix_vst), center = TRUE, scale = TRUE)
+matrix_z <- t(matrix_z)
+```
+
+```{r heat_map_all, fig.height=6, fig.width=9}
+
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+column_2 = HeatmapAnnotation(bar = df_acly_vst[,2],
+                             annotation_label="2_cat",
+    col = list(bar = c("Normal" = "#3b528b", "AML" = "#fde725")),
+    annotation_legend_param = list(bar = list(title = "2_cat")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[,3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen" ,"Blast"= "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+col_16_list =c("HSC" = "darkgreen",
+               "MPP" = "springgreen3",
+                                               "LMPP" = "darkcyan",
+                                               "CMP"= "tan1",
+                                               "GMP" = "darkorange1",
+                                               "MEP" = "red1",
+                                               "Mono" = "firebrick3",
+                                               "Ery" = "tomato4",
+                                               "CLP" = "skyblue1",
+                                               "CD4Tcell" = "dodgerblue3",
+                                               "CD8Tcell" = "navyblue",
+                                               "Bcell" = "orchid2",
+                                               "NKcell" = "purple4",
+                              "pHSC" = "forestgreen",
+                              "LSC" = "#E69F00",
+                              "Blast" = "#F8766D") 
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[,2],
+                              annotation_label="16_cat",
+    col = list(bar = col_16_list),
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+
+col_fun = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+column_cor = rowAnnotation(bar = vec_cor[vec_top_corr,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+Heatmap(matrix_z[vec_top_corr,],
+        top_annotation = c(column_2,column_5,column_16),
+         heatmap_legend_param = list( title = "Norm_counts"),
+        right_annotation =column_cor,
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Most correlates and anti correlates genes to ACLY in all samples")
+
+
+```
+
+
+
+## ACLY Corrélation analysis in AML samples 
+
+```{r corr AML}
+vst_aml<-matrix_vst[,rownames(subset(metadata_corces, cell_type_2cat == "AML"))]
+
+vec_cor_aml<-cor(x= t(vst_aml), y= vst_aml['ACLY',])
+vec_cor_aml<-as.data.frame(vec_cor_aml)
+
+vec_cor_aml<- drop_na(vec_cor_aml)
+
+pval_aml<-find_pval_cor(row.names(vec_cor_aml), vst_aml)
+vec_cor_aml= cbind(vec_cor_aml,pval_aml )
+
+vec_cor_aml<- vec_cor_aml[order(- vec_cor_aml[,1] ), , drop= FALSE]
+```
+
+### Graph of correlation between ACLY and others genes in AML samples
+
+```{r graphe_cor_aml}
+vec_top_corr_aml<- rownames(subset(vec_cor_aml, vec_cor_aml$V1 >= seuil_cor | vec_cor_aml$V1<=(seuil_cor*-1)))
+vec_cor_aml[1,2]<-0
+
+vec_cor_aml= cbind(vec_cor_aml,is.element(rownames(vec_cor_aml),vec_top_corr_aml))
+
+dat <- subset(vec_cor_aml)
+dat$lab <- ""
+ix_label <- vec_cor_aml$`is.element(rownames(vec_cor_aml), vec_top_corr_aml)`== TRUE   
+dat$lab[ix_label] <- rownames(dat)[ix_label]
+
+
+
+ggplot(data=dat, aes(x = dat[,1], y =  -log10(dat[,2]),label = lab)) +
+  geom_text_repel(max.overlaps = Inf)+
+  #geom_text_repel(max.overlaps = Inf,min.segment.length = Inf) +
+  #geom_text_repel(direction="y",box.padding = 4, max.overlaps = Inf,segment.color="yellow") +
+  geom_point(color = ifelse(dat$lab == "", "blue", "red")) +
+  labs(title = "Graph of correlation between ACLY and other genes (aml)", 
+       x = "R coefficient", y = "-log10 p-val corr test") +
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12))
+```
+
+
+### Heat map of most correlate and anti-correlate genes to ACLY in AML samples
+
+```{r normalisation z-score aml}
+matrix_z_aml <- scale(t(vst_aml), center = TRUE, scale = TRUE)
+matrix_z_aml <- t(matrix_z_aml)
+```
+
+
+
+```{r heatmap_aml}
+
+column_cor = rowAnnotation(bar = vec_cor_aml[vec_top_corr_aml,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[colnames(matrix_z_aml),3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Blast" = "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")))
+
+
+Heatmap(matrix_z_aml[vec_top_corr_aml,],
+        top_annotation = c(column_5),
+        heatmap_legend_param = list( title = "Norm_counts"),
+        right_annotation =column_cor,
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Most correlates and anti correlates genes to ACLY expression, in AML samples")
+
+
+```
+
+
+```{r heat_aml_all, fig.height=6, fig.width=9}
+
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+column_2 = HeatmapAnnotation(bar = df_acly_vst[,2],
+                             annotation_label="2_cat",
+    col = list(bar = c("Normal" = "#3b528b", "AML" = "#fde725")),
+    annotation_legend_param = list(bar = list(title = "2_cat")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[,3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen" ,"Blast"= "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+col_16_list =c("HSC" = "darkgreen",
+               "MPP" = "springgreen3",
+                                               "LMPP" = "darkcyan",
+                                               "CMP"= "tan1",
+                                               "GMP" = "darkorange1",
+                                               "MEP" = "red1",
+                                               "Mono" = "firebrick3",
+                                               "Ery" = "tomato4",
+                                               "CLP" = "skyblue1",
+                                               "CD4Tcell" = "dodgerblue3",
+                                               "CD8Tcell" = "navyblue",
+                                               "Bcell" = "orchid2",
+                                               "NKcell" = "purple4",
+                              "pHSC" = "forestgreen",
+                              "LSC" = "#E69F00",
+                              "Blast" = "#F8766D") 
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[,2],
+                              annotation_label="16_cat",
+    col = list(bar = col_16_list),
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+
+col_fun = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+column_cor = rowAnnotation(bar = vec_cor_aml[vec_top_corr_aml,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+Heatmap(matrix_z[vec_top_corr_aml,],
+         top_annotation = c(column_2,column_5,column_16),
+         heatmap_legend_param = list( title = "Norm_counts"),
+        right_annotation =column_cor,
+         show_column_names = FALSE,
+         col = color_vincent,
+         column_title = "Most correlates and anti correlates genes to ACLY in AML samples")
+
+
+```
+
+
+
+
+
+
+## ACLY Corrélation analysis in Normal samples 
+
+```{r corr normal}
+vst_normal<-matrix_vst[,rownames(subset(metadata_corces, cell_type_2cat == "Normal"))]
+
+vec_cor_normal<-cor(x= t(vst_normal), y= vst_normal['ACLY',])
+vec_cor_normal<-as.data.frame(vec_cor_normal)
+
+vec_cor_normal<- drop_na(vec_cor_normal)
+
+pval_normal<-find_pval_cor(row.names(vec_cor_normal), vst_normal)
+vec_cor_normal= cbind(vec_cor_normal,pval_normal )
+
+vec_cor_normal<- vec_cor_normal[order(- vec_cor_normal[,1] ), , drop= FALSE]
+
+```
+### Graph of correlation between ACLY and others genes in Normal samples
+
+```{r graphe_cor_normal}
+
+vec_top_corr_normal<- rownames(subset(vec_cor_normal, 
+                                      vec_cor_normal$V1 >= seuil_cor | vec_cor_normal$V1<=(seuil_cor*-1)))
+
+vec_cor_normal= cbind(vec_cor_normal,is.element(rownames(vec_cor_normal),vec_top_corr_normal))
+
+
+dat <- subset(vec_cor_normal)
+dat$lab <- ""
+ix_label <- vec_cor_normal$`is.element(rownames(vec_cor_normal), vec_top_corr_normal)`== TRUE   
+dat$lab[ix_label] <- rownames(dat)[ix_label]
+
+
+
+ggplot(data=dat, aes(x = dat[,1], y =  -log10(dat[,2]),label = lab)) +
+  geom_text_repel(max.overlaps = Inf) +
+  #geom_text_repel(direction="y",box.padding = 4, max.overlaps = Inf,segment.color="yellow") +
+  geom_point(color = ifelse(dat$lab == "", "blue", "red")) +
+  labs(title = "Graph of correlation between ACLY and other genes (Normal)", 
+       x = "R coefficient", y = "-log10 p-val corr test")+
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12))
+```
+
+### Heat map of most correlate and anti-correlate genes to ACLY in Normal samples
+
+```{r normalisation z-score normal}
+matrix_z_normal <- scale(t(vst_normal), center = TRUE, scale = TRUE)
+matrix_z_normal <- t(matrix_z_normal)
+```
+
+
+```{r Heatmap normal}
+
+column_cor = rowAnnotation(bar = vec_cor_normal[vec_top_corr_normal,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+column_5= HeatmapAnnotation(bar = df_acly_vst[colnames(matrix_z_normal),3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[colnames(matrix_z_normal),2],
+    col = list(bar = col_16_list),
+    annotation_label="16_cat",
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+Heatmap(matrix_z_normal[vec_top_corr_normal,],
+        top_annotation = c(column_5,column_16),
+        right_annotation =column_cor,
+         heatmap_legend_param = list( title = "Norm_counts"),
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Heatamp of the most correlates and anti correlates genes to ACLY expression, in Normal samples")
+
+```
+## ACLY Corrélation analysis in Normal_BM samples 
+```{r}
+vst_nbm<-matrix_vst[,rownames(subset(metadata_corces, cell_type_4cat_BMPB == "Normal_BM"))]
+
+vec_cor_nbm<-cor(x= t(vst_nbm), y= vst_nbm['ACLY',])
+vec_cor_nbm<-as.data.frame(vec_cor_nbm)
+
+vec_cor_nbm<- drop_na(vec_cor_nbm)
+
+pval_nbm<-find_pval_cor(row.names(vec_cor_nbm), vst_nbm)
+vec_cor_nbm= cbind(vec_cor_nbm,pval_nbm )
+
+vec_cor_nbm<- vec_cor_nbm[order(- vec_cor_nbm[,1] ), , drop= FALSE]
+
+```
+
+
+```{r graphe_cor_nbm}
+
+vec_top_corr_nbm<- rownames(subset(vec_cor_nbm, 
+                                      vec_cor_nbm$V1 >= seuil_cor | vec_cor_nbm$V1<=(seuil_cor*-1)))
+
+vec_cor_nbm= cbind(vec_cor_nbm,is.element(rownames(vec_cor_nbm),vec_top_corr_nbm))
+
+
+dat <- subset(vec_cor_nbm)
+dat$lab <- ""
+ix_label <- vec_cor_nbm$`is.element(rownames(vec_cor_nbm), vec_top_corr_nbm)`== TRUE   
+dat$lab[ix_label] <- rownames(dat)[ix_label]
+
+
+
+ggplot(data=dat, aes(x = dat[,1], y =  -log10(dat[,2]),label = lab)) +
+  geom_text_repel(max.overlaps = Inf) +
+  #geom_text_repel(direction="y",box.padding = 4, max.overlaps = Inf,segment.color="yellow") +
+  geom_point(color = ifelse(dat$lab == "", "blue", "red")) +
+  labs(title = "Graph of correlation between ACLY and other genes (Normal)", 
+       x = "R coefficient", y = "-log10 p-val corr test")+
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12))
+```
+
+```{r normalisation z-score nbm}
+matrix_z_nbm <- scale(t(vst_nbm), center = TRUE, scale = TRUE)
+matrix_z_nbm <- t(matrix_z_nbm)
+```
+
+```{r}
+column_cor = rowAnnotation(bar = vec_cor_nbm[vec_top_corr_nbm,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[colnames(matrix_z_nbm),2],
+    col = list(bar = col_16_list),
+    annotation_label="16_cat",
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+Heatmap(matrix_z_nbm[vec_top_corr_nbm,],
+        top_annotation = column_16,
+        right_annotation =column_cor,
+         heatmap_legend_param = list( title = "Norm_counts"),
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Most correlates and anti correlates genes to ACLY expression, in Normal_BM samples")
+```
+
+
+```{r heat_aml_all2, fig.height=6, fig.width=9}
+
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+column_2 = HeatmapAnnotation(bar = df_acly_vst[,2],
+                             annotation_label="2_cat",
+    col = list(bar = c("Normal" = "#3b528b", "AML" = "#fde725")),
+    annotation_legend_param = list(bar = list(title = "2_cat")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[,3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen" ,"Blast"= "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+col_16_list =c("HSC" = "darkgreen",
+               "MPP" = "springgreen3",
+                                               "LMPP" = "darkcyan",
+                                               "CMP"= "tan1",
+                                               "GMP" = "darkorange1",
+                                               "MEP" = "red1",
+                                               "Mono" = "firebrick3",
+                                               "Ery" = "tomato4",
+                                               "CLP" = "skyblue1",
+                                               "CD4Tcell" = "dodgerblue3",
+                                               "CD8Tcell" = "navyblue",
+                                               "Bcell" = "orchid2",
+                                               "NKcell" = "purple4",
+                              "pHSC" = "forestgreen",
+                              "LSC" = "#E69F00",
+                              "Blast" = "#F8766D") 
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[,2],
+                              annotation_label="16_cat",
+    col = list(bar = col_16_list),
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+
+col_fun = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+column_cor = rowAnnotation(bar = vec_cor_nbm[vec_top_corr_nbm,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+Heatmap(matrix_z[vec_top_corr_nbm,],
+          top_annotation = c(column_2,column_5,column_16),
+          heatmap_legend_param = list( title = "Norm_counts"),
+          right_annotation =column_cor,
+          show_column_names = FALSE,
+          col = color_vincent,
+          column_title = "Most correlates and anti correlates genes to ACLY in Normal_BM samples")
+
+
+```
+
+
+
+
+
+## ACLY Corrélation analysis in Normal_PB samples
+
+```{r}
+vst_npb<-matrix_vst[,rownames(subset(metadata_corces, cell_type_4cat_BMPB == "Normal_PB"))]
+
+vec_cor_npb<-cor(x= t(vst_npb), y= vst_npb['ACLY',])
+vec_cor_npb<-as.data.frame(vec_cor_npb)
+
+vec_cor_npb<- drop_na(vec_cor_npb)
+
+pval_npb<-find_pval_cor(row.names(vec_cor_npb), vst_npb)
+vec_cor_npb= cbind(vec_cor_npb,pval_npb )
+
+vec_cor_npb<- vec_cor_npb[order(- vec_cor_npb[,1] ), , drop= FALSE]
+
+```
+
+```{r graphe_cor_npb}
+
+vec_top_corr_npb<- rownames(subset(vec_cor_npb, 
+                                      vec_cor_npb$V1 >= seuil_cor | vec_cor_npb$V1<=(seuil_cor*-1)))
+
+vec_cor_npb= cbind(vec_cor_npb,is.element(rownames(vec_cor_npb),vec_top_corr_npb))
+vec_cor_npb[1,2]<-0
+
+
+dat <- subset(vec_cor_npb)
+dat$lab <- ""
+ix_label <- vec_cor_npb$`is.element(rownames(vec_cor_npb), vec_top_corr_npb)`== TRUE   
+dat$lab[ix_label] <- rownames(dat)[ix_label]
+
+
+
+ggplot(data=dat, aes(x = dat[,1], y =  -log10(dat[,2]),label = lab)) +
+  geom_text_repel(max.overlaps = Inf) +
+  #geom_text_repel(direction="y",box.padding = 4, max.overlaps = Inf,segment.color="yellow") +
+  geom_point(color = ifelse(dat$lab == "", "blue", "red")) +
+  labs(title = "Graph of correlation between ACLY and other genes (Normal)", 
+       x = "R coefficient", y = "-log10 p-val corr test")+
+  theme(plot.title=element_text(size=14)) +
+  theme(axis.title=element_text(size=12))
+```
+
+```{r normalisation z-score npb}
+matrix_z_npb <- scale(t(vst_npb), center = TRUE, scale = TRUE)
+matrix_z_npb <- t(matrix_z_npb)
+```
+
+```{r}
+column_cor = rowAnnotation(bar = vec_cor_npb[vec_top_corr_npb,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[colnames(matrix_z_npb),2],
+    col = list(bar = col_16_list),
+    annotation_label="16_cat",
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+Heatmap(matrix_z_npb[vec_top_corr_npb,],
+        top_annotation = column_16,
+        right_annotation =column_cor,
+         heatmap_legend_param = list( title = "Norm_counts"),
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Most correlates and anti correlates genes to ACLY expression, in Normal_BM samples")
+```
+
+```{r heat_aml_all3, fig.height=6, fig.width=9}
+
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+column_2 = HeatmapAnnotation(bar = df_acly_vst[,2],
+                             annotation_label="2_cat",
+    col = list(bar = c("Normal" = "#3b528b", "AML" = "#fde725")),
+    annotation_legend_param = list(bar = list(title = "2_cat")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[,3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen" ,"Blast"= "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+col_16_list =c("HSC" = "darkgreen",
+               "MPP" = "springgreen3",
+                                               "LMPP" = "darkcyan",
+                                               "CMP"= "tan1",
+                                               "GMP" = "darkorange1",
+                                               "MEP" = "red1",
+                                               "Mono" = "firebrick3",
+                                               "Ery" = "tomato4",
+                                               "CLP" = "skyblue1",
+                                               "CD4Tcell" = "dodgerblue3",
+                                               "CD8Tcell" = "navyblue",
+                                               "Bcell" = "orchid2",
+                                               "NKcell" = "purple4",
+                              "pHSC" = "forestgreen",
+                              "LSC" = "#E69F00",
+                              "Blast" = "#F8766D") 
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[,2],
+                              annotation_label="16_cat",
+    col = list(bar = col_16_list),
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+
+col_fun = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+column_cor = rowAnnotation(bar = vec_cor_npb[vec_top_corr_npb,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+Heatmap(matrix_z[vec_top_corr_npb,],
+          top_annotation = c(column_2,column_5,column_16),
+          heatmap_legend_param = list( title = "Norm_counts"),
+          right_annotation =column_cor,
+          show_column_names = FALSE,
+          col = color_vincent,
+          column_title = "Most correlates and anti correlates genes to ACLY in Normal_PB samples")
+
+
+```
+
+# Signature ACLY
+
+```{r}
+#seuil_cor<-0.75
+
+#corr_total
+vec_top_corr
+
+#corr_aml
+vec_top_corr_aml
+
+#corr_normal
+vec_top_corr_normal
+
+
+#corr_Normal_BM
+vec_top_corr_nbm
+
+#corr_Normal_PB
+vec_top_corr_npb
+```
+
+## Signature positive et négative
+
+### Boxplot Signature
+```{r}
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+
+
+func_signature(vec_top_corr,matrix_vst,vec_cor)
+
+func_signature(vec_top_corr_aml,vst_aml,vec_cor_aml)
+
+func_signature(vec_top_corr_nbm,vst_nbm,vec_cor_nbm)
+
+func_signature(vec_top_corr_npb,vst_npb,vec_cor_npb)
+
+```
+
+
+
+### Boxplot Total All
+```{r ,fig.height=6, fig.width=9}
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec_top_corr,matrix_vst,vec_cor),
+       func_signature(vec_top_corr,vst_aml,vec_cor),
+       func_signature(vec_top_corr,vst_nbm,vec_cor),
+       func_signature(vec_top_corr,vst_npb,vec_cor))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of All Sample Totale", 
+       x = "", y = "Signature All Sample Totale", fill= "Groupe")
+   
+```
+### Boxplot Total AML
+
+
+```{r ,fig.height=6, fig.width=9}
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec_top_corr_aml,matrix_vst,vec_cor_aml),
+       func_signature(vec_top_corr_aml,vst_aml,vec_cor_aml),
+       func_signature(vec_top_corr_aml,vst_nbm,vec_cor_aml),
+       func_signature(vec_top_corr_aml,vst_npb,vec_cor_aml))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of AML Sample Totale", 
+       x = "", y = "Signature AML Sample Totale", fill= "Groupe")
+   
+```
+
+
+### Boxplot Total Normal_BM
+
+```{r ,fig.height=6, fig.width=9}
+
+vec<-vec_top_corr_nbm
+
+correl<- vec_cor_nbm
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_BM Sample Totale", 
+       x = "", y = "Signature Normal_BM Sample Totale", fill= "Groupe")
+   
+```
+
+
+
+### Boxplot Total Normal_PB
+
+```{r ,fig.height=6, fig.width=9}
+
+vec<-vec_top_corr_npb
+
+correl<- vec_cor_npb
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_PB Sample Totale", 
+       x = "", y = "Signature Normal_PB Sample Totale", fill= "Groupe")
+   
+```
+
+
+
+### Venn diagram
+
+```{r}
+color_venn<-scale_fill_gradient(low="#440154",high = "#fde725")
+```
+
+```{r Venn diagram}
+
+
+list_sign<-list(vec_top_corr_aml,vec_top_corr_nbm,vec_top_corr_npb)
+
+ggVennDiagram(list_sign,label_alpha = 0.5,
+              category.names = c("AML","Normal_BM","Normal_PB"),
+              label = "count")+
+  color_venn
+    
+
+```
+
+```{r}
+intersect(vec_top_corr_aml,intersect(vec_top_corr_nbm,vec_top_corr_npb))
+```
+
+
+
+## Signature positive
+
+### Boxplot Signature
+
+```{r}
+
+vec_top_cor_pos<-rownames(subset(vec_cor, 
+                                 vec_cor$V1 >= 0 & is.element(rownames(vec_cor),vec_top_corr)))
+vec_top_corr_aml_pos<-c("ACLY",rownames(subset(vec_cor_aml, 
+                                      vec_cor_aml$V1 >= 0 & is.element(rownames(vec_cor_aml),vec_top_corr_aml))))
+vec_top_corr_nbm_pos<-rownames(subset(vec_cor_nbm, 
+                                      vec_cor_nbm$V1 >= 0 & is.element(rownames(vec_cor_nbm),vec_top_corr_nbm)))
+vec_top_corr_npb_pos<-c("ACLY",rownames(subset(vec_cor_npb, 
+                                      vec_cor_npb$V1 >= 0 & is.element(rownames(vec_cor_npb),vec_top_corr_npb))))
+
+vec_top_cor_pos
+vec_top_corr_aml_pos
+vec_top_corr_nbm_pos
+vec_top_corr_npb_pos
+```
+
+### Boxplot Positive All_Samples
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_cor_pos
+
+correl<- vec_cor
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of All Sample Positive", 
+       x = "", y = "Signature All Sample Positive", fill= "Groupe")
+   
+```
+
+
+### Boxplot Positive AML
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_aml_pos
+
+correl<- vec_cor_aml
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of AML Positive", 
+       x = "", y = "Signature AML Positive", fill= "Groupe")
+   
+```
+
+
+### Boxplot Positive Normal_BM
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_nbm_pos
+
+correl<- vec_cor_nbm
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_BM  Positive", 
+       x = "", y = "Signature Normal_BM Positive", fill= "Groupe")
+   
+```
+
+
+
+### Boxplot Positive Normal_PB
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_npb_pos
+
+correl<- vec_cor_npb
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_PB  Positive", 
+       x = "", y = "Signature Normal_PB Positive", fill= "Groupe")
+   
+```
+
+
+
+### Venn diagram
+```{r}
+list_sign<-list(vec_top_corr_aml_pos,vec_top_corr_nbm_pos,vec_top_corr_npb_pos)
+
+ggVennDiagram(list_sign,label_alpha = 0.5,
+              category.names = c("AML","Normal_BM","Normal_PB"),
+              label = "count")+
+  color_venn
+```
+```{r}
+intersect(vec_top_corr_aml_pos,intersect(vec_top_corr_nbm_pos,vec_top_corr_npb_pos))
+```
+
+## Signature négative
+
+### Boxplot Signature
+```{r}
+vec_top_cor_neg<-rownames(subset(vec_cor, 
+                                 vec_cor$V1 <= 0 & is.element(rownames(vec_cor),vec_top_corr)))
+vec_top_corr_aml_neg<-rownames(subset(vec_cor_aml, 
+                                      vec_cor_aml$V1 <= 0 & is.element(rownames(vec_cor_aml),vec_top_corr_aml)))
+vec_top_corr_nbm_neg<-rownames(subset(vec_cor_nbm, 
+                                      vec_cor_nbm$V1 <= 0 & is.element(rownames(vec_cor_nbm),vec_top_corr_nbm)))
+vec_top_corr_npb_neg<-rownames(subset(vec_cor_npb, 
+                                      vec_cor_npb$V1 <= 0 & is.element(rownames(vec_cor_npb),vec_top_corr_npb)))
+
+vec_top_cor_neg
+vec_top_corr_aml_neg
+vec_top_corr_nbm_neg
+vec_top_corr_npb_neg
+```
+
+### Boxplot Negative All_Samples
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_cor_neg
+
+correl<- vec_cor
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of All_Samples  Negative", 
+       x = "", y = "Signature All_Samples Negative", fill= "Groupe")
+   
+```
+
+
+### Boxplot Negative AML
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_aml_neg
+
+correl<- vec_cor_aml
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of AML  Negative", 
+       x = "", y = "Signature AML Negative", fill= "Groupe")
+   
+```
+
+
+### Boxplot Negative Normal_BM
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_nbm_neg
+
+correl<- vec_cor_nbm
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_BM Negative", 
+       x = "", y = "Signature Normal_BM Negative", fill= "Groupe")
+   
+```
+
+
+
+### Boxplot Negative Normal_PB
+
+```{r ,fig.height=6, fig.width=9}
+vec<-vec_top_corr_npb_neg
+
+correl<- vec_cor_npb
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of Normal_PB Negative", 
+       x = "", y = "Signature Normal_PB Negative", fill= "Groupe")
+   
+```
+
+
+
+### Venn diagram
+```{r}
+list_sign<-list(vec_top_corr_aml_neg,vec_top_corr_nbm_neg,vec_top_corr_npb_neg)
+
+ggVennDiagram(list_sign,label_alpha = 0.5,
+              category.names = c("AML","Normal_BM","Normal_PB"),
+              label = "count")+
+  color_venn
+```
+```{r}
+intersect(vec_top_corr_aml_neg,intersect(vec_top_corr_nbm_neg,vec_top_corr_npb_neg))
+```
+
+## Signature LSC
+
+### LSC positive
+```{r}
+table(metadata_corces$cell_subtype)
+```
+
+```{r}
+vst_LSC<-matrix_vst[,rownames(subset(metadata_corces, cell_subtype == "LSC"))]
+```
+
+
+```{r}
+cor_LSC<-cor(x= t(vst_LSC), y= vst_LSC['ACLY',])
+cor_LSC<-as.data.frame(cor_LSC)
+cor_LSC<-drop_na(cor_LSC)
+cor_LSC<- cor_LSC[order(- cor_LSC[,1] ), , drop= FALSE]
+
+```
+
+```{r}
+cor_LSC["NUP93",]
+```
+
+```{r}
+
+seuil_test<-0.90
+length(which(cor_LSC$V1 > seuil_test))
+length(which(cor_LSC$V1 < ( seuil_test* -1)))
+length(which(cor_LSC$V1 > seuil_test)) + length(which(cor_LSC$V1 < ( seuil_test* -1)))
+```
+```{r}
+#Pour l'instant, test avec les 150 gènes de la signature LSC total avec un seuil à 0.9
+
+sign_LSC_tot90<- rownames(subset(cor_LSC, cor_LSC$V1 >= 0.9 | cor_LSC$V1<=(0.9*-1)))
+sign_LSC_tot90
+```
+
+```{r}
+list_4sign<-list(vec_top_corr_aml,vec_top_corr_nbm,vec_top_corr_npb, sign_LSC_tot90)
+
+ggVennDiagram(list_4sign,label_alpha = 0.5,
+              category.names = c("AML","Normal_BM","Normal_PB","LSC"),
+              label = "count")+
+  color_venn
+    
+```
+
+### heatmap
+
+```{r, fig.height=6, fig.width=9}
+
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+column_2 = HeatmapAnnotation(bar = df_acly_vst[,2],
+                             annotation_label="2_cat",
+    col = list(bar = c("Normal" = "#3b528b", "AML" = "#fde725")),
+    annotation_legend_param = list(bar = list(title = "2_cat")))
+
+column_5 = HeatmapAnnotation(bar = df_acly_vst[,3],
+                             annotation_label="5_cat",
+    col = list(bar = c("Normal_PB" = "lightblue" , "Normal_BM" ="lightgreen" ,"Blast"= "#F8766D","pHSC"= "forestgreen","LSC" ="#E69F00")),
+    annotation_legend_param = list(bar = list(title = "5_cat")))
+
+col_16_list =c("HSC" = "darkgreen",
+               "MPP" = "springgreen3",
+                                               "LMPP" = "darkcyan",
+                                               "CMP"= "tan1",
+                                               "GMP" = "darkorange1",
+                                               "MEP" = "red1",
+                                               "Mono" = "firebrick3",
+                                               "Ery" = "tomato4",
+                                               "CLP" = "skyblue1",
+                                               "CD4Tcell" = "dodgerblue3",
+                                               "CD8Tcell" = "navyblue",
+                                               "Bcell" = "orchid2",
+                                               "NKcell" = "purple4",
+                              "pHSC" = "forestgreen",
+                              "LSC" = "#E69F00",
+                              "Blast" = "#F8766D") 
+
+
+column_16 = HeatmapAnnotation(bar = df_acly_subtype[,2],
+                              annotation_label="16_cat",
+    col = list(bar = col_16_list),
+    annotation_legend_param = list(bar = list(title = "16_cat")))
+
+
+
+col_fun = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+
+
+
+column_cor_LSC = rowAnnotation(bar = cor_LSC[sign_LSC_tot90,1],col = list(bar =col_fun),
+                           annotation_label="R",
+                           annotation_legend_param = list(bar = list(title = "R_Pearson")))
+
+
+Heatmap(matrix_z[sign_LSC_tot90,],
+        top_annotation = c(column_2,column_5,column_16),
+         heatmap_legend_param = list( title = "Norm_counts"),
+        right_annotation =column_cor_LSC,
+        show_column_names = FALSE,
+        col = color_vincent,
+        column_title = "Most correlates and anti correlates genes to ACLY in LSC samples")
+
+```
+
+
+```{r}
+lsc_cor_pos<-rownames(subset(cor_LSC, cor_LSC$V1 >= 0 & is.element(rownames(cor_LSC),
+                                                                         sign_LSC_tot90)))
+
+lsc_cor_neg<-rownames(subset(cor_LSC, 
+                             cor_LSC$V1 < 0 & is.element(rownames(cor_LSC),sign_LSC_tot90)))
+
+lsc_cor_pos
+lsc_cor_neg
+```
+
+
+### Boxplot Total LSC
+
+```{r ,fig.height=6, fig.width=9}
+vec<-sign_LSC_tot90
+
+correl<- cor_LSC
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of LSC Total", 
+       x = "", y = "Signature LSC Total", fill= "Groupe")
+   
+```
+
+### Boxplot Positive LSC
+
+```{r ,fig.height=6, fig.width=9}
+vec<-lsc_cor_pos
+
+correl<- cor_LSC
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of LSC Positive", 
+       x = "", y = "Signature LSC Positive", fill= "Groupe")
+   
+```
+
+### Boxplot Négative LSC
+
+```{r ,fig.height=6, fig.width=9}
+vec<-lsc_cor_neg
+
+correl<- cor_LSC
+  
+groupe=c(rep("Total", 81), rep("AML", 32),rep("Normal_BM", 29),rep("Normal_PB", 20))
+
+
+signature_totale= c(func_signature(vec,matrix_vst,correl),
+       func_signature(vec,vst_aml,correl),
+       func_signature(vec,vst_nbm,correl),
+       func_signature(vec,vst_npb,correl))
+
+signature_df=data.frame(groupe, signature_totale)
+signature_df$groupe <- factor(signature_df$groupe, levels = c("Total", "Normal_BM", "Normal_PB","AML"))
+
+ggplot(signature_df, aes(x=signature_df$groupe ,y=signature_df$signature_totale,fill=signature_df$groupe))+
+  geom_boxplot() +
+  geom_jitter(width = 0.1) +
+  scale_fill_manual(values=c("#440154","#31688e","#35b779","#fde725")) +
+  labs(title = "Signature of LSC Négative", 
+       x = "", y = "Signature LSC Négative", fill= "Groupe")
+   
+```
+
+
+#export des vecteurs et corrélations
+
+```{r save vectors}
+
+# signature AML
+correlation_corces_aml<-vec_cor_aml
+save(correlation_corces_aml, file = "correlation_corces_aml.rda")
+
+
+save(vec_top_corr_aml, file = "vec_top_corr_aml.rda")
+save(vec_top_corr_aml_pos, file = "vec_top_corr_aml_pos.rda")
+save(vec_top_corr_aml_neg, file = "vec_top_corr_aml_neg.rda")
+
+# signature totale pour van galen
+
+correlation_corces_total<-vec_cor
+save(correlation_corces_total, file = "correlation_corces_total.rda")
+
+save(vec_top_corr, file = "vec_top_corr.rda")
+save(vec_top_cor_pos, file = "vec_top_corr_pos.rda")
+save(vec_top_cor_neg, file = "vec_top_corr_neg.rda")
+
+#Signature LSC
+
+correlation_corces_lsc<-cor_LSC
+save(correlation_corces_lsc, file = "correlation_corces_lsc.rda")
+
+save(sign_LSC_tot90, file = "sign_LSC_tot90.rda")
+
+
+
+```
