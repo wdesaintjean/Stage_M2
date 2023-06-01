@@ -1,0 +1,853 @@
+---
+title: 'AMLCG analysis (010623)'
+author: "wd"
+date: '2023-02-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(markdown)
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+#remove.packages("")
+#install.packages("")
+
+#install.packages("readr")
+library(readr)
+#install.packages("tidyverse")
+library(tidyverse)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+
+#install.packages("survival")
+library(survival)
+#install.packages("survminer")
+library(survminer)
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+
+```
+
+
+# Import_data
+
+```{r}
+amlcg <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/AMLCG_AML_HTSeq_calc_rawcounts.txt") %>%
+column_to_rownames("gene_name")
+
+i <- colnames(amlcg) 
+amlcg[ , i] <- apply(amlcg[ , i], 2,function(x) as.integer(x))
+
+metadata_amlcg  <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/AMLCG_meta_curated_full.txt") %>%
+column_to_rownames("Sample_ID")
+
+inter_data<-intersect(colnames(amlcg),rownames(metadata_amlcg))
+```
+
+
+
+
+
+# Préparation
+
+
+```{r creat dds oject}
+data_deseq <- amlcg[,inter_data]
+meta_deseq <- metadata_amlcg[inter_data,]
+
+dds <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ diagnosis )
+
+# filtration
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+
+
+# normalisation median of ratios method
+
+dds <- DESeq(dds)
+
+matrix_amlcg_vst <-getVarianceStabilizedData(dds)
+```
+```{r}
+matrix_amlcg_vst<-matrix_amlcg_vst[,rownames(metadata_amlcg)]
+```
+
+
+```{r}
+# vec_cor_amlcg<-cor(x= t(matrix_amlcg_vst), y= matrix_amlcg_vst['ACLY',])
+# vec_cor_amlcg<-as.data.frame(vec_cor_amlcg)
+# 
+# find_pval_cor <- function(vec_nom_genes, matrix_count){
+#   vec_final=c()
+#   for(i in vec_nom_genes) {
+#     vec_final <- append(vec_final, cor.test(matrix_count["ACLY",], y= matrix_count[i,])$p.value)
+#    }
+#   return(vec_final)
+# }
+# 
+# pval_all_amlcg<-find_pval_cor(row.names(matrix_amlcg_vst), matrix_amlcg_vst)
+# vec_cor_amlcg= cbind(vec_cor_amlcg,pval_all_amlcg )
+# 
+# vec_cor_amlcg<- vec_cor_amlcg[order(- vec_cor_amlcg[,1] ), , drop= FALSE]
+  
+```
+
+```{r}
+
+annot_amlcg<-rownames(matrix_amlcg_vst)
+save(annot_amlcg, file = "annot_amlcg.rda")
+```
+
+
+
+# Signatures
+
+```{r calcul signature}
+
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+
+#essai avec les 3 signatures du groupe AML de Corces
+
+```
+
+
+## acly seul
+
+```{r}
+#matrix_amlcg_vst["ACLY",]
+quantile(matrix_amlcg_vst["ACLY",], c(0,.33, .66,1))
+```
+```{r}
+amlcg_acly_only<- cut(matrix_amlcg_vst["ACLY",],
+                       breaks=c(7, 9.495394, 9.976401, 12),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(amlcg_acly_only)
+```
+```{r}
+metadata_amlcg$ACLY_only<-amlcg_acly_only
+```
+
+### courbe os
+
+```{r}
+surv_curv_acly <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ ACLY_only, data = metadata_amlcg)
+print(surv_curv_acly )
+```
+
+```{r}
+ggsurvplot(surv_curv_acly,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, ACLY",
+          xlab="Time (Months)")
+```
+### courbe efs
+
+```{r}
+surv_curv_acly_2 <- survfit(Surv(EFS_MONTHS,EFS_STATUS ) ~ ACLY_only, data = metadata_amlcg)
+print(surv_curv_acly_2 )
+```
+
+```{r}
+ggsurvplot(surv_curv_acly_2,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, ACLY",
+          xlab="Time (Months)")
+```
+
+
+# Signature all samples
+
+## Totale
+
+```{r}
+load("omni_total_sign.rda")
+load("correlation_corces_total.rda")
+omni_total_sign
+```
+
+
+
+```{r}
+amlcg_total_signature<-func_signature(omni_total_sign,matrix_amlcg_vst,correlation_corces_total)
+quantile(amlcg_total_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+amlcg_total_signature_continuous<- cut(amlcg_total_signature,
+                       breaks=c(0,2.410825,2.687792,4),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(amlcg_total_signature_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_tot<-amlcg_total_signature_continuous
+```
+
+### courbe os
+
+```{r}
+surv_curv_sign_tot_amlcg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_tot, data = metadata_amlcg)
+print(surv_curv_sign_tot_amlcg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_amlcg,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, total signature",
+          xlab="Time (Months)") 
+```
+### courbe EFS
+
+```{r}
+surv_curv_sign_tot_amlcg_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_tot, data = metadata_amlcg)
+print(surv_curv_sign_tot_amlcg_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_amlcg_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, total signature",
+          xlab="Time (Months)") 
+```
+
+## sIGNATURE all samples POSITIVE
+
+```{r}
+vec_top_corr_pos<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 >= 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_pos
+```
+```{r}
+amlcg_total_pos_signature<-func_signature(vec_top_corr_pos,matrix_amlcg_vst,correlation_corces_total)
+quantile(amlcg_total_pos_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+amlcg_pos_signature_continuous<- cut(amlcg_total_pos_signature,
+                       breaks=c(0, 7.697641, 7.947175, 9),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(amlcg_pos_signature_continuous)
+```
+```{r}
+metadata_amlcg$sign_pos<-amlcg_pos_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_pos_amlcg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_pos, data = metadata_amlcg)
+print(surv_curv_sign_pos_amlcg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_amlcg,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, positive signature",
+          xlab="Time (Months)") 
+```
+### courbe EFS
+
+```{r}
+surv_curv_sign_pos_amlcg_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_pos, data = metadata_amlcg)
+print(surv_curv_sign_pos_amlcg_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_amlcg_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, positive signature",
+          xlab="Time (Months)") 
+```
+
+## sIGNATURE NEGATIVE
+
+```{r}
+vec_top_corr_neg<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 < 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_neg
+```
+
+
+```{r}
+amlcg_total_neg_signature<-func_signature(vec_top_corr_neg,matrix_amlcg_vst,correlation_corces_total)
+quantile(amlcg_total_neg_signature, c(0,.33, .66,1))
+```
+
+```{r}
+amlcg_neg_signature_continuous<- cut(amlcg_total_neg_signature,
+                       breaks=c(-8, -6.667614, -6.264364, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_neg_signature_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_neg<-amlcg_neg_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_neg_amlcg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_neg, data = metadata_amlcg)
+print(surv_curv_sign_neg_amlcg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_amlcg,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_neg_amlcg_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_neg, data = metadata_amlcg)
+print(surv_curv_sign_neg_amlcg_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_amlcg_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+# Signature AML
+## AML totale
+
+```{r}
+load("omni_aml_tot.rda")
+load("correlation_corces_aml.rda")
+
+omni_aml_tot
+
+
+```
+
+```{r}
+amlcg_aml_signature_tot<-func_signature(omni_aml_tot,matrix_amlcg_vst,correlation_corces_aml)
+quantile(amlcg_aml_signature_tot, c(0,.33, .66,1))
+
+```
+```{r}
+amlcg_aml_signature_tot_continuous<- cut(amlcg_aml_signature_tot,
+                       breaks=c(0, 2.725591 ,2.991601 , 4),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_aml_signature_tot_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_aml <- amlcg_aml_signature_tot_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_aml_tot_amlcg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml , data = metadata_amlcg)
+print(surv_curv_sign_aml_tot_amlcg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_tot_amlcg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_aml_tot_amlcg2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml, data = metadata_amlcg)
+print(surv_curv_sign_aml_tot_amlcg2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_tot_amlcg2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_tot_90 signature",
+          xlab="Time (Months)") 
+```
+## AML positive
+```{r}
+
+
+vec_aml_pos<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 >= 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_pos
+```
+
+
+```{r}
+amlcg_aml_signature_pos<-func_signature(vec_aml_pos,matrix_amlcg_vst,correlation_corces_aml)
+quantile(amlcg_aml_signature_pos, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+amlcg_aml_signature_pos_continuous<- cut(amlcg_aml_signature_pos,
+                       breaks=c(0,  6.701494,7.015224 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_aml_signature_pos_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_aml_pos <- amlcg_aml_signature_pos_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_sign_aml_pos<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_pos , data = metadata_amlcg)
+print(surv_curv_sign_aml_pos)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_pos ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_aml_pos2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml_pos , data = metadata_amlcg)
+print(surv_curv_sign_aml_pos2 )
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_pos2 ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_pos_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+## AML negative
+
+
+```{r}
+vec_aml_neg<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 < 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_neg
+```
+
+```{r}
+amlcg_aml_signature_neg<-func_signature(vec_aml_neg,matrix_amlcg_vst,correlation_corces_aml)
+quantile(amlcg_aml_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+amlcg_aml_signature_neg_continuous<- cut(amlcg_aml_signature_neg,
+                       breaks=c(-10, -5.928138, -5.693276 , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_aml_signature_neg_continuous)
+```
+```{r}
+metadata_amlcg$sign_aml_neg <- amlcg_aml_signature_neg_continuous
+```
+
+#courbe OS
+
+```{r}
+surv_curv_sign_aml_neg<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_neg  , data = metadata_amlcg)
+print(surv_curv_sign_aml_neg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_neg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_aml_neg2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml_neg , data = metadata_amlcg)
+print(surv_curv_sign_aml_neg2 )
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_neg2 ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+```
+
+# Signature LSC
+
+## LSC TOTAL
+
+```{r}
+load("omni_LSC_tot.rda")
+load("correlation_corces_lsc.rda")
+
+omni_LSC_tot
+```
+```{r}
+amlcg_lsc_signature_tot<-func_signature(omni_LSC_tot,matrix_amlcg_vst,correlation_corces_lsc)
+quantile(amlcg_lsc_signature_tot, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+amlcg_lsc_signature_tot_continuous<- cut(amlcg_lsc_signature_tot,
+                       breaks=c(0,  1.2636953,1.4289093, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_lsc_signature_tot_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_lsc_tot <- amlcg_lsc_signature_tot_continuous
+```
+
+#courbe OS
+
+```{r}
+surv_curv_sign_lsc_tot<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_tot , data = metadata_amlcg)
+print(surv_curv_sign_lsc_tot)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_tot ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_lsc_tot2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_lsc_tot , data = metadata_amlcg)
+print(surv_curv_sign_lsc_tot2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_tot2 ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+
+```
+
+## lsc positive
+
+```{r}
+vec_lsc_pos<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 >= 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_pos
+```
+
+
+```{r}
+amlcg_lsc_signature_pos<-func_signature(vec_lsc_pos,matrix_amlcg_vst,correlation_corces_lsc)
+quantile(amlcg_lsc_signature_pos, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+amlcg_lsc_signature_pos_continuous<- cut(amlcg_lsc_signature_pos,
+                       breaks=c(0, 6.671293,6.866607 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_lsc_signature_pos_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_lsc_pos <- amlcg_lsc_signature_pos_continuous
+```
+
+
+#courbe OS
+
+```{r}
+surv_curv_sign_lsc_pos<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_pos , data = metadata_amlcg)
+print(surv_curv_sign_lsc_pos)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_pos,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_lsc_pos2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_lsc_pos , data = metadata_amlcg)
+print(surv_curv_sign_lsc_pos2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_pos2 ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+
+```
+
+
+## lsc negative
+
+
+```{r}
+vec_lsc_neg<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 < 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_neg
+```
+
+```{r}
+amlcg_lsc_signature_neg<-func_signature(vec_lsc_neg,matrix_amlcg_vst,correlation_corces_lsc)
+quantile(amlcg_lsc_signature_neg, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+amlcg_lsc_signature_neg_continuous<- cut(amlcg_lsc_signature_neg,
+                       breaks=c(-10,-5.534739 ,-5.258794 , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_lsc_signature_neg_continuous)
+```
+
+```{r}
+metadata_amlcg$sign_lsc_neg <- amlcg_lsc_signature_neg_continuous
+```
+
+
+#courbe OS
+
+```{r}
+surv_curv_sign_lsc_neg<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_neg , data = metadata_amlcg)
+print(surv_curv_sign_lsc_neg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_neg,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_lsc_neg2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_lsc_neg , data = metadata_amlcg)
+print(surv_curv_sign_lsc_neg2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_lsc_neg2 ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+
+```

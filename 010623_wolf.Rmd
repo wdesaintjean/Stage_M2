@@ -1,0 +1,840 @@
+---
+title: "wolf_ega_analysis (01_06_23)"
+author: "wd"
+date: '2023-04-19'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+
+library(survival)
+#install.packages("survminer")
+library(survminer)
+
+
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+
+```
+
+
+# Importations des datas
+
+```{r}
+wolf <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/Wolf_counts_ega.txt")
+
+wolf<- wolf[,2:138]
+
+wolf<- aggregate( x= wolf ,by= list(wolf$hgnc_symbol),FUN=mean)
+rownames(wolf)<- wolf$Group.1
+wolf <- wolf[,2:137]
+
+metadata_wolf <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/metadata_wolf.csv")  %>%
+column_to_rownames("ID")
+
+i <- colnames(wolf) 
+wolf[ , i] <- apply(wolf[ , i], 2,function(x) as.integer(x))
+
+inter_data<- intersect(colnames(wolf),rownames(metadata_wolf))
+```
+
+
+
+
+# Préparation
+
+136 échantillons
+
+```{r analyse shrink}
+data_deseq <- wolf[,inter_data]
+meta_deseq <- metadata_wolf[inter_data,]
+
+dds <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ Sex )
+
+# filtration
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+
+
+# normalisation median of ratios method
+
+dds <- DESeq(dds)
+matrix_wolf_vst <-getVarianceStabilizedData(dds)
+```
+```{r}
+fil_metadata_wolf<-metadata_wolf[colnames(matrix_wolf_vst),]
+```
+
+```{r}
+# vec_cor_wolf<-cor(x= t(matrix_wolf_vst), y= matrix_wolf_vst['ACLY',])
+# vec_cor_wolf<-as.data.frame(vec_cor_wolf)
+```
+
+```{r}
+
+annot_wolf<-rownames(matrix_wolf_vst)
+save(annot_wolf, file = "annot_wolf.rda")
+```
+
+
+
+# Signatures
+
+```{r calcul signature}
+
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+
+```
+
+
+##ACLY seul
+
+```{r}
+quantile(matrix_wolf_vst["ACLY",], c(0,.33, .66,1))
+```
+
+```{r}
+wolf_acly_only<- cut(matrix_wolf_vst["ACLY",],
+                     #breaks=quant,
+                       breaks=c(0, 11.28425, 11.56576,14),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(wolf_acly_only)
+```
+
+```{r}
+fil_metadata_wolf$ACLY_only<-wolf_acly_only
+```
+
+### courbe OS
+
+
+```{r}
+surv_curv_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ ACLY_only, 
+                          data = fil_metadata_wolf)
+print(surv_curv_wolf )
+```
+
+```{r}
+ggsurvplot(surv_curv_wolf,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, ACLY",
+          xlab="Time (Months)")
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ ACLY_only, 
+                          data = fil_metadata_wolf)
+print(surv_curv_wolf_2 )
+```
+
+```{r}
+ggsurvplot(surv_curv_wolf_2,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, ACLY",
+          xlab="Time (Months)")
+```
+
+
+# Signature all samples  totale
+
+```{r}
+load("omni_total_sign.rda")
+load("correlation_corces_total.rda")
+```
+
+## Totale
+
+```{r}
+wolf_tot_signature<-func_signature(omni_total_sign,matrix_wolf_vst,correlation_corces_total)
+quantile(wolf_tot_signature, c(0,.33, .66,1)) 
+```
+```{r}
+wolf_tot_signature_continuous<- cut(wolf_tot_signature,
+                       breaks=c(0, 2.022308, 2.248395 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(wolf_tot_signature_continuous)
+```
+```{r}
+fil_metadata_wolf$sign_all_tot<-wolf_tot_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_tot_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_all_tot, data = fil_metadata_wolf)
+print(surv_curv_sign_tot_wolf)
+```
+```{r}
+ggsurvplot(surv_curv_sign_tot_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_tot_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_all_tot, data = fil_metadata_wolf)
+print(surv_curv_sign_tot_wolf_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+## sIGNATURE all samples POSITIVE
+
+```{r}
+vec_top_corr_pos<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 >= 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_pos
+```
+
+```{r}
+wolf_pos_signature<-func_signature(vec_top_corr_pos,matrix_wolf_vst,correlation_corces_total)
+quantile(wolf_pos_signature, c(0,.33, .66,1))
+```
+```{r}
+wolf_pos_signature_continuous<- cut(wolf_pos_signature,
+                       breaks=c(0,8.381960, 8.626166, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(wolf_pos_signature_continuous)
+```
+
+### courbe OS
+```{r}
+fil_metadata_wolf$sign_tot_pos<-wolf_pos_signature_continuous
+surv_curv_sign_pos_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_tot_pos, data = fil_metadata_wolf)
+print(surv_curv_sign_pos_wolf)
+```
+
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, positive signature",
+          xlab="Time (Months)") 
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_pos_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_tot_pos, data = fil_metadata_wolf)
+print(surv_curv_sign_pos_wolf_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, positive signature",
+          xlab="Time (Months)") 
+```
+
+## sIGNATURE all samples NEGATIVE
+
+```{r}
+vec_top_corr_neg<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 < 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_neg
+```
+
+```{r}
+wolf_neg_signature<-func_signature(vec_top_corr_neg,matrix_wolf_vst,correlation_corces_total)
+quantile(wolf_neg_signature, c(0,.33, .66,1))
+```
+
+```{r}
+wolf_neg_signature_continuous<- cut(wolf_neg_signature,
+                       breaks=c(-10, -8.853824,-8.597729, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(wolf_neg_signature_continuous)
+```
+
+### Courbe OS
+
+```{r}
+fil_metadata_wolf$sign_tot_neg<-wolf_neg_signature_continuous
+
+surv_curv_sign_neg_wolf<- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_tot_neg, data = fil_metadata_wolf)
+print(surv_curv_sign_neg_wolf)
+```
+
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### Courbe EFS
+
+```{r}
+surv_curv_sign_neg_wolf_2<- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_tot_neg, data = fil_metadata_wolf)
+print(surv_curv_sign_neg_wolf_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+
+# Signature AML
+```{r}
+load("omni_aml_tot.rda")
+load("correlation_corces_aml.rda")
+
+omni_aml_tot
+```
+
+
+```{r}
+wolf_total_signature<-func_signature(omni_aml_tot,matrix_wolf_vst,correlation_corces_aml)
+quantile(wolf_total_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+wolf_total_signature_continuous<- cut(wolf_total_signature,
+                       breaks=c(0, 2.494740 ,2.708420, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(wolf_total_signature_continuous)
+```
+
+```{r}
+fil_metadata_wolf$sign_tot_aml<-wolf_total_signature_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_sign_tot_aml_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_tot_aml, 
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_tot_aml_wolf)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_aml_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+### Courbe RFS
+
+```{r}
+surv_curv_sign_tot_aml_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_tot_aml,
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_tot_aml_wolf_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_aml_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+## sIGNATURE POSITIVE
+
+
+```{r}
+vec_aml_pos<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 >= 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_pos
+
+```
+
+```{r}
+wolf_pos_aml_signature<-func_signature(vec_aml_pos,matrix_wolf_vst,correlation_corces_aml)
+quantile(wolf_pos_aml_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+wolf_pos_aml_signature_continuous<- cut(wolf_pos_aml_signature,
+                       breaks=c(0, 7.323753 ,7.574591, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(wolf_pos_aml_signature_continuous)
+```
+
+```{r}
+fil_metadata_wolf$sign_pos_aml<-wolf_pos_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_pos_aml_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_pos_aml, 
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_pos_aml_wolf)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_aml_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, positive signature",
+          xlab="Time (Months)")
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_pos_aml_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_pos_aml,
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_pos_aml_wolf_2)
+
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+
+
+
+
+
+
+## Signature Négative
+
+```{r}
+vec_aml_neg<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 < 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_neg
+```
+
+```{r}
+wolf_neg_signature<-func_signature(vec_aml_neg,matrix_wolf_vst,correlation_corces_aml)
+quantile(wolf_neg_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+wolf_neg_signature_continuous<- cut(wolf_neg_signature,
+                       breaks=c(-10, -7.950893,-7.744970 , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(wolf_neg_signature_continuous)
+```
+
+```{r}
+fil_metadata_wolf$sign_neg<-wolf_neg_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_neg_wolf <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_neg, 
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_neg_wolf)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_wolf,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)")
+```
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_neg_wolf_2 <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_neg,
+                          data = fil_metadata_wolf)
+print(surv_curv_sign_neg_wolf_2)
+```
+
+
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_wolf_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of Wolf datas, negative signature",
+          xlab="Time (Months)")
+```
+
+
+# Signature LSC
+## LSC totale
+
+
+```{r}
+load("omni_LSC_tot.rda")
+load("correlation_corces_lsc.rda")
+
+omni_LSC_tot
+```
+
+```{r}
+wolf_lsc_signature<-func_signature(omni_LSC_tot,matrix_wolf_vst,correlation_corces_lsc)
+quantile(wolf_lsc_signature, c(0,.33, .66,1))
+
+```
+
+```{r}
+wolf_lsc_signature_continuous<- cut(wolf_lsc_signature,
+                       breaks=c(0, 1.2988308,1.4803185 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(wolf_lsc_signature_continuous)
+```
+
+```{r}
+fil_metadata_wolf$lsc_tot<- wolf_lsc_signature_continuous
+```
+
+### courbe OS
+```{r}
+surv_curv_lsc2 <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ lsc_tot, 
+                          data = fil_metadata_wolf)
+print(surv_curv_lsc2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)")
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ lsc_tot,
+                         data = fil_metadata_wolf)
+print(surv_curv_lsc)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of Wolf datas, LSC_tot_90 signature",
+          xlab="Time (Months)") 
+```
+
+## Lsc positive
+
+```{r}
+vec_lsc_pos<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 >= 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_pos
+```
+
+
+```{r}
+wolf_lsc_signature_pos<-func_signature(vec_lsc_pos,matrix_wolf_vst,correlation_corces_lsc)
+quantile(wolf_lsc_signature_pos, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+wolf_lsc_signature_pos_continuous<- cut(wolf_lsc_signature_pos,
+                       breaks=c(0, 7.687096, 7.897333 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(wolf_lsc_signature_pos_continuous)
+```
+
+```{r}
+fil_metadata_wolf$sign_lsc_pos <- wolf_lsc_signature_pos_continuous
+```
+
+
+### courbe OS
+```{r}
+surv_curv_lsc_pos2 <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_lsc_pos, 
+                          data = fil_metadata_wolf)
+print(surv_curv_lsc_pos2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)")
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc_pos <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_lsc_pos ,
+                             data = fil_metadata_wolf)
+print(surv_curv_lsc_pos )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_pos ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of Wolf datas, LSC_pos_90 signature",
+          xlab="Time (Months)") 
+```
+
+## Lsc negative
+
+```{r}
+vec_lsc_neg<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 < 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_neg
+```
+
+```{r}
+wolf_lsc_signature_neg<-func_signature(vec_lsc_neg,matrix_wolf_vst,correlation_corces_lsc)
+quantile(wolf_lsc_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+wolf_lsc_signature_neg_continuous<- cut(wolf_lsc_signature_neg,
+                       breaks=c(-10,-6.636084,-6.420211, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(wolf_lsc_signature_neg_continuous)
+```
+
+```{r}
+fil_metadata_wolf$sign_lsc_neg <- wolf_lsc_signature_neg_continuous
+```
+
+
+
+### courbe OS
+```{r}
+surv_curv_lsc_neg2 <- survfit(Surv(fil_metadata_wolf$`OS [months]`, fil_metadata_wolf$`Death Event`) ~ sign_lsc_neg, 
+                          data = fil_metadata_wolf)
+print(surv_curv_lsc_neg2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)")
+```
+
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc_neg <- survfit(Surv(fil_metadata_wolf$`RFS [months]`, fil_metadata_wolf$`Relapse Event`) ~ sign_lsc_neg , 
+                             data =fil_metadata_wolf)
+print(surv_curv_lsc_neg )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_neg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of Wolf datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+
+

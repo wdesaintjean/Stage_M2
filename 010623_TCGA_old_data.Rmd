@@ -1,0 +1,850 @@
+---
+title: '010623_TGCA_old_data'
+author: "wd"
+date: '2023-02-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+
+library(survival)
+#install.packages("survminer")
+library(survminer)
+
+
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+
+```
+
+
+
+
+## Importations des datas
+
+```{r}
+load("correlation_corces_aml.rda")
+
+load("vec_top_corr_aml.rda")
+load("vec_top_corr_aml_pos.rda")
+load("vec_top_corr_aml_neg.rda")
+```
+
+
+```{r}
+tcga <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/TCGA_AML_HTSeq_calc_rawcounts.txt") %>%
+column_to_rownames("gene_name")
+i <- colnames(tcga) 
+tcga[ , i] <- apply(tcga[ , i], 2,function(x) as.integer(x))
+
+metadata_tcga <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/TCGA_clinical_full_curated_19_06_2020.txt") %>%
+column_to_rownames("Sample_ID")
+
+inter_data<-intersect(colnames(tcga),rownames(metadata_tcga))
+
+```
+
+```{r}
+#ligne 79
+
+metadata_tcga<- filter(metadata_tcga, TT_type == "Intensive" & OS_MONTHS >= 0.5)
+inter_data<-intersect(colnames(tcga),rownames(metadata_tcga))
+```
+
+
+
+# Préparation
+
+151 samples (alors que 200 métadatas)
+
+
+```{r analyse shrink}
+data_deseq <- tcga[,inter_data]
+meta_deseq <- metadata_tcga[inter_data,]
+
+dds <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ Sex )
+
+# filtration
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+
+
+# normalisation median of ratios method
+
+dds <- DESeq(dds)
+matrix_tcga_vst <-getVarianceStabilizedData(dds)
+```
+
+
+```{r}
+fil_metadata_tcga<-metadata_tcga[colnames(matrix_tcga_vst),]
+```
+
+```{r}
+# vec_cor_tcga<-cor(x= t(matrix_tcga_vst), y= matrix_tcga_vst['ACLY',])
+# vec_cor_tcga<-as.data.frame(vec_cor_tcga)
+# 
+# find_pval_cor <- function(vec_nom_genes, matrix_count){
+#   vec_final=c()
+#   for(i in vec_nom_genes) {
+#     vec_final <- append(vec_final, cor.test(matrix_count["ACLY",], y= matrix_count[i,])$p.value)
+#    }
+#   return(vec_final)
+# }
+# 
+# pval_all_tcga<-find_pval_cor(row.names(matrix_tcga_vst), matrix_tcga_vst)
+# vec_cor_tcga= cbind(vec_cor_tcga,pval_all_tcga)
+# 
+# vec_cor_tcga<- vec_cor_tcga[order(- vec_cor_tcga[,1] ), , drop= FALSE]
+#   
+```
+
+
+```{r}
+
+annot_tcga<-rownames(matrix_tcga_vst)
+save(annot_tcga, file = "annot_tcga.rda")
+```
+
+
+# Signatures
+
+```{r calcul signature}
+
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+
+#essai avec les 3 signatures du groupe AML de Corces
+
+```
+
+##ACLY seul
+
+```{r}
+quantile(matrix_tcga_vst["ACLY",], c(0,.33, .66,1))
+```
+
+```{r}
+tcga_acly_only<- cut(matrix_tcga_vst["ACLY",],
+                     #breaks=quant,
+                       breaks=c(0, 11.99884, 12.27266,14),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(tcga_acly_only)
+```
+```{r}
+fil_metadata_tcga$ACLY_only<-tcga_acly_only
+```
+### courbe OS
+
+```{r}
+surv_curv_acly <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ ACLY_only, data = fil_metadata_tcga)
+print(surv_curv_acly )
+```
+
+```{r}
+ggsurvplot(surv_curv_acly,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, ACLY",
+          xlab="Time (Months)")
+```
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_acly_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ ACLY_only, data = fil_metadata_tcga)
+print(surv_curv_acly_2)
+
+```
+```{r}
+ggsurvplot(surv_curv_acly_2,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, ACLY",
+          xlab="Time (Months)")
+```
+
+
+# Signature all samples
+
+```{r}
+load("omni_total_sign.rda")
+load("correlation_corces_total.rda")
+```
+
+## Totale
+
+```{r}
+tcga_tot_signature<-func_signature(omni_total_sign,matrix_tcga_vst,correlation_corces_total)
+quantile(tcga_tot_signature, c(0,.33, .66,1)) 
+```
+```{r}
+tcga_tot_signature_continuous<- cut(tcga_tot_signature,
+                       breaks=c(0, 2.435773, 2.612540, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(tcga_tot_signature_continuous)
+```
+
+```{r}
+fil_metadata_tcga$sign_all_tot<-tcga_tot_signature_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_tot_tcga <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_all_tot, data = fil_metadata_tcga)
+print(surv_curv_sign_tot_tcga)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_tot_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+### courbe EFS
+
+```{r}
+surv_curv_sign_tot_tcga_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_all_tot, data = fil_metadata_tcga)
+print(surv_curv_sign_tot_tcga_2)
+```
+```{r}
+ggsurvplot(surv_curv_sign_tot_tcga_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, total signature",
+          xlab="Time (Months)")
+```
+
+## sIGNATURE all samples POSITIVE
+
+```{r}
+vec_top_corr_pos<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 >= 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_pos
+```
+
+```{r}
+tcga_pos_signature<-func_signature(vec_top_corr_pos,matrix_tcga_vst,correlation_corces_total)
+quantile(tcga_pos_signature, c(0,.33, .66,1))
+```
+
+```{r}
+tcga_pos_signature_continuous<- cut(tcga_pos_signature,
+                       breaks=c(0,8.897089,9.078966, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(tcga_pos_signature_continuous)
+```
+### courbe OS
+```{r}
+fil_metadata_tcga$sign_tot_pos<-tcga_pos_signature_continuous
+surv_curv_sign_pos_tcga <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_tot_pos, data = fil_metadata_tcga)
+print(surv_curv_sign_pos_tcga)
+```
+
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, positive signature",
+          xlab="Time (Months)") 
+```
+
+### courbe EFS
+
+```{r}
+surv_curv_sign_pos_tcga_2 <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_tot_pos, data = fil_metadata_tcga)
+print(surv_curv_sign_pos_tcga_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_pos_tcga_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, positive signature",
+          xlab="Time (Months)") 
+```
+
+
+## sIGNATURE all samples NEGATIVE
+
+```{r}
+vec_top_corr_neg<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 < 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_neg
+```
+```{r}
+tcga_neg_signature<-func_signature(vec_top_corr_neg,matrix_tcga_vst,correlation_corces_total)
+quantile(tcga_neg_signature, c(0,.33, .66,1))
+```
+```{r}
+tcga_neg_signature_continuous<- cut(tcga_neg_signature,
+                       breaks=c(-10, -8.644485, -8.450537, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_neg_signature_continuous)
+```
+### Courbe OS
+
+```{r}
+fil_metadata_tcga$sign_tot_neg<-tcga_neg_signature_continuous
+
+surv_curv_sign_neg_tcga<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_tot_neg, data = fil_metadata_tcga)
+print(surv_curv_sign_neg_tcga)
+```
+
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### Courbe EFS
+
+```{r}
+
+surv_curv_sign_neg_tcga_2<- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_tot_neg, data = fil_metadata_tcga)
+print(surv_curv_sign_neg_tcga_2)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg_tcga_2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+# Signature AML
+
+```{r}
+load("omni_aml_tot.rda")
+load("correlation_corces_aml.rda")
+
+omni_aml_tot
+```
+
+## AML totale
+
+```{r}
+tcga_aml_signature_tot<-func_signature(omni_aml_tot,matrix_tcga_vst,correlation_corces_aml)
+quantile(tcga_aml_signature_tot, c(0,.33, .66,1))
+```
+
+```{r}
+tcga_aml_signature_tot_continuous<- cut(tcga_aml_signature_tot,
+                       breaks=c(0, 3.122058, 3.291995  , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_aml_signature_tot_continuous)
+```
+
+```{r}
+fil_metadata_tcga$sign_aml <- tcga_aml_signature_tot_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_aml_tot_tcga<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml, data = fil_metadata_tcga)
+print(surv_curv_sign_neg_tcga)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_tot_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### Courbe EFS
+
+```{r}
+surv_curv_aml_tot_tcga2<- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml, data = fil_metadata_tcga)
+print(surv_curv_aml_tot_tcga2)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_tot_tcga2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+## AML positive
+```{r}
+vec_aml_pos<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 >= 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_pos
+```
+
+```{r}
+tcga_aml_signature_pos<-func_signature(vec_aml_pos,matrix_tcga_vst,correlation_corces_aml)
+quantile(tcga_aml_signature_pos, c(0,.33, .66,1))
+
+```
+```{r}
+tcga_aml_signature_pos_continuous<- cut(tcga_aml_signature_pos,
+                       breaks=c(0,  8.087026, 8.284492 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_aml_signature_pos_continuous)
+```
+
+```{r}
+fil_metadata_tcga$sign_aml_pos <- tcga_aml_signature_pos_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_aml_pos_tcga<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_pos, data = fil_metadata_tcga)
+print(surv_curv_aml_pos_tcga)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_pos_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### Courbe EFS
+
+```{r}
+surv_curv_aml_pos_tcga2<- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml_pos, data = fil_metadata_tcga)
+print(surv_curv_aml_pos_tcga2)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_pos_tcga2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+## AML negative
+
+
+```{r}
+vec_aml_neg<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 < 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_neg
+```
+
+```{r}
+tcga_aml_signature_neg<-func_signature(vec_aml_neg,matrix_tcga_vst,correlation_corces_aml)
+quantile(tcga_aml_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+tcga_aml_signature_neg_continuous<- cut(tcga_aml_signature_neg,
+                       breaks=c(-10, -7.668129, -7.487796 , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_aml_signature_neg_continuous)
+```
+```{r}
+fil_metadata_tcga$sign_aml_neg <- tcga_aml_signature_neg_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_aml_neg_tcga<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_neg, data = fil_metadata_tcga)
+print(surv_curv_aml_neg_tcga)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_neg_tcga,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+### Courbe EFS
+
+```{r}
+surv_curv_aml_neg_tcga2<- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_aml_neg, data = fil_metadata_tcga)
+print(surv_curv_aml_neg_tcga2)
+```
+
+```{r}
+ggsurvplot(surv_curv_aml_neg_tcga2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+# Signature LSC
+## LSC totale
+
+
+```{r}
+load("omni_LSC_tot.rda")
+load("correlation_corces_lsc.rda")
+
+omni_LSC_tot
+```
+
+```{r}
+tcga_lsc_signature<-func_signature(omni_LSC_tot, matrix_tcga_vst, correlation_corces_lsc)
+quantile(tcga_lsc_signature, c(0,.33, .66,1))
+
+```
+
+```{r}
+tcga_lsc_signature_continuous<- cut(tcga_lsc_signature,
+                       breaks=c(-1,  1.467496, 1.620658 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_lsc_signature_continuous)
+```
+
+```{r}
+fil_metadata_tcga$lsc_tot<- tcga_lsc_signature_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_lsc2<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ lsc_tot, data = fil_metadata_tcga)
+print(surv_curv_lsc2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ lsc_tot, data = fil_metadata_tcga)
+print(surv_curv_lsc)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, LSC_tot_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+## Lsc positive
+
+```{r}
+vec_lsc_pos<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 >= 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_pos
+```
+
+```{r}
+tcga_lsc_signature_pos<-func_signature(vec_lsc_pos,matrix_tcga_vst,correlation_corces_lsc)
+quantile(tcga_lsc_signature_pos, c(0,.33, .66,1))
+
+```
+
+```{r}
+tcga_lsc_signature_pos_continuous<- cut(tcga_lsc_signature_pos,
+                       breaks=c(0,8.435191,8.677186 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_lsc_signature_pos_continuous)
+```
+
+```{r}
+fil_metadata_tcga$sign_lsc_pos <- tcga_lsc_signature_pos_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_lsc_pos2<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_pos, data = fil_metadata_tcga)
+print(surv_curv_lsc_pos2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_pos2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc_pos <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_lsc_pos , data = fil_metadata_tcga)
+print(surv_curv_lsc_pos )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_pos ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, LSC_pos_90 signature",
+          xlab="Time (Months)") 
+```
+
+## Lsc negative
+
+```{r}
+vec_lsc_neg<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 < 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+vec_lsc_neg
+```
+
+
+
+```{r}
+tcga_lsc_signature_neg<-func_signature(vec_lsc_neg,matrix_tcga_vst,correlation_corces_lsc)
+quantile(tcga_lsc_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+tcga_lsc_signature_neg_continuous<- cut(tcga_lsc_signature_neg,
+                       breaks=c(-10, -7.273954,-7.012136  , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(tcga_lsc_signature_neg_continuous)
+```
+
+```{r}
+fil_metadata_tcga$sign_lsc_neg <- tcga_lsc_signature_neg_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_lsc_neg2<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_neg, data = fil_metadata_tcga)
+print(surv_curv_lsc_neg2)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_neg2,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+### courbe EFS
+
+```{r}
+surv_curv_lsc_neg <- survfit(Surv(EFS_MONTHS, EFS_STATUS) ~ sign_lsc_neg , data = fil_metadata_tcga)
+print(surv_curv_lsc_neg )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_neg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of TCGA datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+
+
+
