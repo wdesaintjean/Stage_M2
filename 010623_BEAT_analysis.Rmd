@@ -1,0 +1,633 @@
+---
+title: "010623_BEAT"
+author: "wd"
+date: '2023-02-20'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+
+library(survival)
+#install.packages("survminer")
+library(survminer)
+
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+
+```
+
+
+# Import des données
+
+
+```{r}
+beat <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/BEAT_All_samples_htseq_raw_counts.tsv") %>%
+column_to_rownames("gene_name")
+
+i <- colnames(beat) 
+beat[ , i] <- apply(beat[ , i], 2,function(x) as.integer(x))
+
+metadata_beat <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/BEAT_clinical_data_rnaseq_modified.txt") %>%
+column_to_rownames("Sample_ID")
+
+```
+
+
+filtration Vincent
+```{r}
+#Ligne 138
+
+#v2
+
+BEAT_AML_D0_samples <- metadata_beat %>%
+  filter(dxAtInclusion %in% c("ACUTE MYELOID LEUKAEMIA (AML) AND RELATED PRECURSOR NEOPLASMS"),
+  !specificDxAtAcquisition %in% c(	"Myeloid sarcoma", "unknown","Essential thrombocythaemia","Atypical chronic myeloid leukaemia, BCR-ABL1 negative", "Myeloid leukaemia associated with Down syndrome", "Plasma cell myeloma"),
+       isRelapse == "FAUX",
+       Timepoint == "Diagnosis"
+) %>% distinct(Sample_ID_1) %>% unlist() %>% as.character()
+
+BEAT_AML_D0_BM_samples <- metadata_beat %>%
+  filter(dxAtInclusion %in% c("ACUTE MYELOID LEUKAEMIA (AML) AND RELATED PRECURSOR NEOPLASMS"),
+  !specificDxAtAcquisition %in% c(	"Myeloid sarcoma", "unknown","Essential thrombocythaemia","Atypical chronic myeloid leukaemia, BCR-ABL1 negative", "Myeloid leukaemia associated with Down syndrome", "Plasma cell myeloma"),
+       isRelapse == "FAUX",
+       Timepoint == "Diagnosis",
+  specimenType == "Bone Marrow Aspirate"
+) %>% distinct(Sample_ID_1) %>% unlist() %>% as.character()
+
+metadata_beat_filtered <- metadata_beat %>% filter(Sample_ID_1 %in% BEAT_AML_D0_BM_samples) %>%
+    filter(OS_MONTHS >= 0.5 & is.na(OS_STATUS) == F & grepl("Standard Chemotherapy", cumulativeTreatmentTypes))
+
+
+```
+
+
+On ne conserve que les patients BM et D0, donc diagnostiqu
+165 échantillons à la fin
+```{r}
+metadata_beat<- metadata_beat_filtered
+
+inter_data<-intersect(colnames(beat),rownames(metadata_beat))
+```
+
+
+
+
+
+
+```{r matrice vst}
+data_deseq <- beat[,inter_data]
+meta_deseq <- metadata_beat[inter_data,]
+
+dds_beat <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ AML_diagnosis )
+
+# filtration
+keep <- rowSums(counts(dds_beat)) >= 10
+dds_beat<- dds_beat[keep,]
+
+dds_beat <- DESeq(dds_beat)
+
+matrix_beat_vst <-getVarianceStabilizedData(dds_beat)
+```
+
+```{r}
+matrix_beat_vst<-matrix_beat_vst[,rownames(metadata_beat)]
+```
+
+
+```{r}
+
+annot_beat<-rownames(matrix_beat_vst)
+save(annot_beat, file = "annot_beat.rda")
+```
+
+```{r calcul signature}
+
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+
+#essai avec les 3 signatures du groupe AML de Corces
+
+
+
+```
+
+
+## Avec ACLY
+```{r}
+#matrix_beat_vst["ACLY",]
+quantile(matrix_beat_vst["ACLY",], c(0,.33, .66,1))
+```
+
+```{r}
+beat_acly_only<- cut(matrix_beat_vst["ACLY",],
+                       breaks=c(10, 12.37463, 12.70841, 14),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(beat_acly_only)
+```
+
+```{r}
+metadata_beat$ACLY_only<-beat_acly_only
+```
+
+### Courbe OS
+
+```{r}
+surv_curv_acly <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ ACLY_only, data = metadata_beat)
+print(surv_curv_acly )
+```
+```{r}
+ggsurvplot(surv_curv_acly,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of BEAT datas, ACLY",
+          xlab="Time (Months)")
+```
+
+
+
+
+
+# sIGNATURE ALL SAMPLES
+
+## ALL SAMPLES TOTALE
+
+
+```{r}
+load("omni_total_sign.rda")
+load("correlation_corces_total.rda")
+omni_total_sign
+```
+
+
+```{r}
+beat_signature_all_tot<-func_signature(omni_total_sign,matrix_beat_vst,correlation_corces_total)
+quantile(beat_signature_all_tot, c(0,.33, .66,1)) 
+```
+
+
+```{r}
+beat_all_tot_continuous<- cut(beat_signature_all_tot,
+                       breaks=c(0, 2.735721, 2.934305 ,4),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(beat_all_tot_continuous)
+```
+```{r}
+metadata_beat$sign_all_tot<-beat_all_tot_continuous
+```
+
+```{r}
+surv_curv_all_tot <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_all_tot, data = metadata_beat)
+print(surv_curv_all_tot )
+```
+
+```{r}
+ggsurvplot(surv_curv_all_tot ,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of BEAT datas, total signature ",
+          xlab="Time (Months)")
+```
+
+
+
+## all POSITIVE
+
+```{r}
+vec_top_corr_pos<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 >= 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_pos
+```
+
+```{r}
+beat_pos_signature<-func_signature(vec_top_corr_pos,matrix_beat_vst,correlation_corces_total)
+
+quantile(beat_pos_signature, c(0,.33, .66,1)) 
+```
+
+```{r}
+beat_pos_signature_continuous<- cut(beat_pos_signature,
+                       breaks=c(0, 9.227890 ,9.377159, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(beat_pos_signature_continuous)
+```
+
+```{r}
+metadata_beat$sign_pos<-beat_pos_signature_continuous
+surv_curv_sign_pos <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_pos, data = metadata_beat)
+print(surv_curv_sign_pos )
+```
+```{r}
+ggsurvplot(surv_curv_sign_pos,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of BEAT datas, positive signature",
+          xlab="Time (Months)") 
+```
+## sIGNATURE NEGATIVE
+
+```{r}
+vec_top_corr_neg<-rownames(subset(correlation_corces_total, 
+                             correlation_corces_total$V1 < 0 & is.element(rownames(correlation_corces_total),omni_total_sign)))
+vec_top_corr_neg
+```
+
+
+```{r}
+beat_neg_signature<-func_signature(vec_top_corr_neg,matrix_beat_vst,correlation_corces_total)
+
+quantile(beat_neg_signature, c(0,.33, .66,1))
+```
+
+```{r}
+beat_neg_signature_continuous<- cut(beat_neg_signature,
+                       breaks=c(-10, -8.393098, -8.121123, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(beat_neg_signature_continuous)
+```
+```{r}
+metadata_beat$sign_neg<-beat_neg_signature_continuous
+surv_curv_sign_neg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_neg, data = metadata_beat)
+print(surv_curv_sign_neg )
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_neg,
+          #xlim = c(0,2000), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of BEAT datas, negative signature",
+          xlab="Time (Months)") 
+```
+# Signature AML
+
+## AML totale
+
+```{r}
+load("omni_aml_tot.rda")
+load("correlation_corces_aml.rda")
+
+omni_aml_tot
+
+
+```
+```{r}
+beat_aml_signature_tot<-func_signature(omni_aml_tot,matrix_beat_vst,correlation_corces_aml)
+quantile(beat_aml_signature_tot, c(0,.33, .66,1))
+
+```
+
+```{r}
+beat_aml_signature_tot_continuous<- cut(beat_aml_signature_tot,
+                       breaks=c(0, 3.468095,3.676824 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(beat_aml_signature_tot_continuous)
+```
+
+```{r}
+metadata_beat$sign_aml <- beat_aml_signature_tot_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_sign_aml_tot_beat <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml , data = metadata_beat)
+print(surv_curv_sign_aml_tot_beat)
+```
+```{r}
+ggsurvplot(surv_curv_sign_aml_tot_beat ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+## AML positive
+```{r}
+vec_aml_pos<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 >= 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_pos
+```
+
+
+```{r}
+beat_aml_signature_pos<-func_signature(vec_aml_pos,matrix_beat_vst,correlation_corces_aml)
+quantile(beat_aml_signature_pos, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+beat_aml_signature_pos_continuous<- cut(beat_aml_signature_pos,
+                       breaks=c(0,  8.445973,8.645352, 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(beat_aml_signature_pos_continuous)
+```
+
+```{r}
+metadata_beat$sign_aml_pos <- beat_aml_signature_pos_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_sign_aml_pos<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_pos , data = metadata_beat)
+print(surv_curv_sign_aml_pos)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_pos ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+## AML negative
+
+
+```{r}
+vec_aml_neg<-rownames(subset(correlation_corces_aml, 
+                             correlation_corces_aml$V1 < 0 & is.element(rownames(correlation_corces_aml),omni_aml_tot)))
+vec_aml_neg
+```
+
+```{r}
+beat_aml_signature_neg<-func_signature(vec_aml_neg,matrix_beat_vst,correlation_corces_aml)
+quantile(beat_aml_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+beat_aml_signature_neg_continuous<- cut(beat_aml_signature_neg,
+                       breaks=c(-10, -7.309126,-7.080544 , 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(beat_aml_signature_neg_continuous)
+```
+
+```{r}
+metadata_beat$sign_aml_neg <- beat_aml_signature_neg_continuous
+```
+
+#courbe OS
+
+```{r}
+surv_curv_sign_aml_neg<- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_aml_neg  , data = metadata_beat)
+print(surv_curv_sign_aml_neg)
+```
+
+```{r}
+ggsurvplot(surv_curv_sign_aml_neg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, negative signature",
+          xlab="Time (Months)") 
+```
+
+
+# Signature LSC
+## LSC totale
+
+
+```{r}
+load("omni_LSC_tot.rda")
+load("correlation_corces_lsc.rda")
+
+omni_LSC_tot
+```
+
+
+
+```{r}
+beat_lsc_signature<-func_signature(omni_LSC_tot,matrix_beat_vst,correlation_corces_lsc)
+quantile(beat_lsc_signature, c(0,.33, .66,1))
+
+```
+
+```{r}
+beat_lsc_signature_continuous<- cut(beat_lsc_signature,
+                       breaks=c(0, 1.545881,1.807643 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(beat_lsc_signature_continuous)
+```
+```{r}
+metadata_beat$lsc_tot<- beat_lsc_signature_continuous
+```
+
+
+### courbe OS
+
+```{r}
+surv_curv_lsc <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ lsc_tot, data = metadata_beat)
+print(surv_curv_lsc)
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_tot_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+```{r}
+
+# vecteurs de gènes positifs et négatifs
+
+lsc_cor_pos<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 >= 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+
+lsc_cor_neg<-rownames(subset(correlation_corces_lsc, 
+                             correlation_corces_lsc$V1 < 0 & is.element(rownames(correlation_corces_lsc),omni_LSC_tot)))
+
+```
+
+## Lsc positive
+
+
+```{r}
+amlcg_lsc_signature_pos<-func_signature(lsc_cor_pos,matrix_beat_vst,correlation_corces_lsc)
+quantile(amlcg_lsc_signature_pos, c(0,.33, .66,1))
+
+```
+
+
+```{r}
+amlcg_lsc_signature_pos_continuous<- cut(amlcg_lsc_signature_pos,
+                       breaks=c(0, 8.444183,8.644697 , 10),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(amlcg_lsc_signature_pos_continuous)
+```
+
+```{r}
+metadata_beat$sign_lsc_pos <- amlcg_lsc_signature_pos_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_lsc_pos <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_pos , data = metadata_beat)
+print(surv_curv_lsc_pos )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_pos ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of BEAT datas, LSC_pos_90 signature",
+          xlab="Time (Months)") 
+```
+
+
+## Lsc negative
+
+
+```{r}
+beat_lsc_signature_neg<-func_signature(lsc_cor_neg,matrix_beat_vst,correlation_corces_lsc)
+quantile(beat_lsc_signature_neg, c(0,0.33, 0.66,1))
+
+```
+
+```{r}
+beat_lsc_signature_neg_continuous<- cut(beat_lsc_signature_neg,
+                       breaks=c(-10, -7.025593,-6.691972, 0),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+
+table(beat_lsc_signature_neg_continuous)
+```
+
+```{r}
+metadata_beat$sign_lsc_neg <- beat_lsc_signature_neg_continuous
+```
+
+### courbe OS
+
+```{r}
+surv_curv_lsc_neg <- survfit(Surv(OS_MONTHS, OS_STATUS) ~ sign_lsc_neg , data = metadata_beat)
+print(surv_curv_lsc_neg )
+```
+
+```{r}
+ggsurvplot(surv_curv_lsc_neg ,
+          #xlim = c(0,67), 
+          pval = TRUE, conf.int = TRUE,
+          risk.table = TRUE, # Add risk table
+          risk.table.col = "strata", # Change risk table color by groups
+          linetype = "strata", # Change line type by groups
+          surv.median.line = "hv", # Specify median survival
+          ggtheme = theme_bw(), # Change ggplot2 theme
+          palette = c("#440154", "#21918c","#fde725"),
+          title="Survival analysis of AMLCG datas, LSC_neg_90 signature",
+          xlab="Time (Months)") 
+```

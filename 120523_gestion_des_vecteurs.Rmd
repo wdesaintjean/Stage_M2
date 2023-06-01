@@ -1,0 +1,74 @@
+---
+title: "gestion_vecteurs"
+author: "wd"
+date: "2023-05-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# cHARGEMENT Noms des annotations:
+```{r}
+
+#AMLCG
+load("annot_amlcg.rda")
+
+#BEAT
+load("annot_beat.rda")
+
+#TCGA
+load("annot_tcga.rda")
+
+#Wolf
+load("annot_wolf.rda")
+
+
+
+#Van_Galen
+load("annot_van_galen.rda")
+
+```
+
+```{r}
+tot<-intersect(annot_van_galen,intersect(annot_amlcg, intersect(annot_beat,intersect(annot_tcga,annot_wolf))))
+```
+
+# Signature totale
+```{r}
+load("vec_top_corr.rda")
+```
+
+```{r}
+omni_total_sign<-intersect(vec_top_corr,tot)
+save(omni_total_sign, file = "omni_total_sign.rda")
+```
+
+# Signature AML
+```{r}
+load("vec_top_corr_aml.rda")
+```
+
+
+```{r}
+omni_aml_tot<-intersect(vec_top_corr_aml,tot)
+save(omni_aml_tot, file = "omni_aml_tot.rda")
+```
+
+# Signature LSC
+```{r}
+load("sign_LSC_tot90.rda")
+
+```
+
+```{r}
+omni_LSC_tot<-intersect(sign_LSC_tot90,tot)
+save(omni_LSC_tot, file = "omni_LSC_tot.rda")
+```
+
+
+
+
+
+
