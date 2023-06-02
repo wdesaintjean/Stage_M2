@@ -1,0 +1,985 @@
+---
+title: "10032022_van_galen_sc"
+author: "wd"
+date: '2023-03-10'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+
+library(readr)
+library(tidyverse)
+
+#install.packages("Seurat")
+library(Seurat)
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+
+```
+
+
+# Essai sur all normal
+
+## Préparation
+
+```{r import data BM}
+
+BM1_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM1.dem.txt") %>% column_to_rownames("Gene")
+BM1_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3587996_BM1.anno.txt") %>% column_to_rownames("Cell")
+
+BM1 <- CreateSeuratObject(
+  BM1_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM1_anno
+)
+
+#
+BM2_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM2.dem.txt") %>% column_to_rownames("Gene")
+BM2_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3587997_BM2.anno.txt") %>% column_to_rownames("Cell")
+
+BM2 <- CreateSeuratObject(
+  BM2_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM2_anno
+)
+#
+BM3_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM3.dem.txt") %>% column_to_rownames("Gene")
+BM3_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3587999_BM3.anno.txt") %>% column_to_rownames("Cell")
+
+BM3 <- CreateSeuratObject(
+  BM3_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM3_anno
+)
+#
+BM4_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM4.dem.txt") %>% column_to_rownames("Gene")
+BM4_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3588001_BM4.anno.txt") %>% column_to_rownames("Cell")
+
+BM4 <- CreateSeuratObject(
+  BM4_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM4_anno
+)
+#
+BM5_34p_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM5-34p.dem.txt") %>% column_to_rownames("Gene")
+BM5_34p_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3588002_BM5-34p.anno.txt") %>% column_to_rownames("Cell")
+
+BM5_34p <- CreateSeuratObject(
+  BM5_34p_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM5_34p_anno
+)
+
+#
+BM5_34p38n_dem <- read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/BM5-34p38n.dem.txt") %>% column_to_rownames("Gene")
+BM5_34p38n_anno <-read_tsv("C:/Users/william desaintjean/Documents/van_galen_raw/GSM3588003_BM5-34p38n.anno.txt") %>% column_to_rownames("Cell")
+
+BM5_34p38n <- CreateSeuratObject(
+  BM5_34p38n_dem,
+  project = "try_seurat",
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = BM5_34p38n_anno
+)
+
+```
+
+```{r fusion Normal BM}
+
+pbmc_combined <- merge(BM1, y = c(BM2,BM3,BM4,BM5_34p,BM5_34p38n), 
+                       add.cell.ids = c("BM1", "BM2", "BM3","BM4","BM5_34p","BM5_34p38n"), 
+                       project = "norm_analyse")
+#pbmc_combined
+
+#Idents(pbmc_combined) <- "CellType"
+
+#pbmc_combined[[]]
+
+```
+
+```{r quality control}
+VlnPlot(pbmc_combined, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+## Filtration et normalisation
+
+```{r filtration BM}
+
+pbmc_combined <- subset(pbmc_combined, subset =  nFeature_RNA < 2500) 
+
+```
+
+```{r normalization BM}
+#pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+pbmc_combined <- NormalizeData(pbmc_combined)
+```
+
+## PCA
+
+```{r high variable feat}
+pbmc_combined  <- FindVariableFeatures(pbmc_combined , selection.method = "vst", nfeatures = 2000)
+
+```
+
+
+```{r}
+all.genes <- rownames(pbmc_combined)
+pbmc_combined <- ScaleData(pbmc_combined, features = all.genes)
+pbmc_combined <- RunPCA(pbmc_combined, features = VariableFeatures(object = pbmc_combined))
+```
+
+```{r}
+ElbowPlot(pbmc_combined, ndims=50)
+```
+Conserve 15 dimensions
+
+## Clustering and visualisation by type cell 
+
+
+```{r}
+pbmc_combined <- FindNeighbors(pbmc_combined, dims = 1:15)
+pbmc_combined <- FindClusters(pbmc_combined, resolution = 0.2)
+pbmc_combined <- RunUMAP(pbmc_combined, dims = 1:15,n.neighbors=5,min.dist=0.2,n.components = 2)
+#pbmc_combined <- RunUMAP(pbmc_combined, dims = 1:15,n.neighbors=5,min.dist=0.2,metric= "manhattan")
+#pbmc_combined <- RunUMAP(pbmc_combined, dims = 1:15,n.neighbors=5,min.dist=0.2,metric= "correlation")
+#?RunUMAP
+#'arg' should be one of “euclidean”, “cosine”, “manhattan”, “hamming”, “correlation”, “precomputed”
+```
+
+```{r essai avec groupby}
+my_cols <-c('B'="lightgreen",'cDC'="green",'CTL'="pink",'earlyEry'="orange",'GMP'="purple",
+            'HSC'="black",'lateEry'="#A93226",'Mono'="yellow",'NK'="darkblue",'pDC'="blue",
+            'Plasma'="darkgreen",'ProB'="#4DD0E1",'Prog'="grey",'ProMono'="red",'T'="lightblue")
+            
+?DimPlot
+DimPlot(pbmc_combined, reduction = "umap", group.by = "CellType", label = TRUE,repel=TRUE,label.color= "brown" ,cols=my_cols) + 
+  scale_x_continuous(limits = c(-10, 15)) + scale_y_continuous(limits = c(-15, 12))
+```
+
+
+```{r}
+FeaturePlot(pbmc_combined, features="ACLY")
+```
+```{r}
+table(pbmc_combined$CellType)
+```
+
+```{r essais non concluants}
+##essais clusters
+#DimPlot(pbmc_combined, reduction = "umap") + 
+#  scale_x_continuous(limits = c(-15, 10)) + scale_y_continuous(limits = c(-10, 20))
+
+#my_cols <-c('0'="#fde725",'1'="#c8e020",'2'="#90d743",'3'="#5ec962",'4'="#35b779",
+#            '5'="#20a486",'6'="#21918c",'7'="#287c8e",'8'="#31688e",
+#            '9'="#3b528b",'10'="#443983",'11'="#481f70",'12'="#440154")
+
+#DimPlot(pbmc_combined, reduction = "umap",cols=my_cols) + 
+#  scale_x_continuous(limits = c(-15, 10)) + scale_y_continuous(limits = c(-10, 20))
+
+##essais graphes individuels
+#Bcell= pbmc_combined$CellType == "B"
+#DimPlot(pbmc_combined, reduction = "umap",cells= Bcell)
+
+#DimPlot(pbmc_combined, reduction = "umap",cells=  WhichCells(object = pbmc_combined, 
+#                                                             expression = CellType == "B"))
+```
+
+```{r}
+plot.list <- list()
+for (i in unique(x = pbmc_combined$CellType)) {
+  
+  vec_cell= pbmc_combined$CellType == i
+  
+  plot.list[[i]] <- DimPlot(
+    object = pbmc_combined,
+     reduction = "umap",
+    cols=my_cols,
+    group.by = "CellType",
+     cells= vec_cell
+  ) + NoLegend() + ggtitle(i)+ scale_x_continuous(limits = c(-10, 15)) + scale_y_continuous(limits = c(-15, 12))
+}
+
+#CombinePlots(plots = plot.list, ncol = 3)
+```
+
+```{r}
+#CombinePlots(plots = c(plot.list[1], plot.list[2],plot.list[3], plot.list[4],plot.list[5], plot.list[6],
+#                       plot.list[7], plot.list[8],plot.list[9], plot.list[10],plot.list[11], plot.list[12],
+#                        plot.list[13],plot.list[14],plot.list[15]), ncol=3, )
+CombinePlots(plots = c(plot.list[1], plot.list[2],plot.list[3], plot.list[4],plot.list[5], plot.list[6]), ncol=3, )
+CombinePlots(plots = c(plot.list[7], plot.list[8],plot.list[9],plot.list[10],plot.list[11], plot.list[12]),ncol=3, )
+CombinePlots(plots = c(plot.list[13],plot.list[14],plot.list[15]), ncol=3, )
+VlnPlot(pbmc_combined, features = "ACLY",group.by = "CellType",cols=my_cols)
+VlnPlot(pbmc_combined, features = "ACLY",group.by = "CellType",cols=my_cols,slot = "counts", log = TRUE)
+```
+
+# D0 Seurat 
+```{r}
+dirs_d0<- list.files("C:/Users/william desaintjean/Documents/van_galen_raw/AML/D0")
+dirs_d0<-split(dirs_d0, ceiling(seq_along(dirs_d0)/2))
+#dirs_d0
+vec_seurat_d0 <- c()
+vec_names <- c()
+for (i in dirs_d0) {
+  name<- read.table(text = i[1], sep = ".", as.is = TRUE)$V1
+  count<-paste("C:/Users/william desaintjean/Documents/van_galen_raw/AML/D0/", name,".dem.txt" ,sep = "")
+  anno<-paste("C:/Users/william desaintjean/Documents/van_galen_raw/AML/D0/", name,".anno.txt" ,sep = "")
+  count_tsv <- read_tsv(count) %>% column_to_rownames("Gene")
+  anno_tsv <-read_tsv(anno) %>% column_to_rownames("Cell")
+  object <- CreateSeuratObject(
+  count_tsv,
+  project = name,
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = anno_tsv)
+  vec_seurat_d0 <- append(vec_seurat_d0,object)
+  vec_names <- append(vec_names,name)
+}
+vec_seurat_d0
+#vec_seurat_d0[[1]][[]]
+```
+
+
+```{r}
+#vec_seurat_d0[[1]][[]]
+seurat_d0 <- merge(x= vec_seurat_d0[[1]], y=c(x= vec_seurat_d0[2:16]),
+add.cell.ids = vec_names,
+project = "analyse_d0")
+
+#seurat_d0[[]]
+```
+
+
+```{r}
+VlnPlot(seurat_d0, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+
+
+```{r}
+seurat_d0 <- subset(seurat_d0, subset =  nFeature_RNA < 2500)
+VlnPlot(seurat_d0, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+
+
+```{r}
+seurat_d0 <- NormalizeData(seurat_d0)
+seurat_d0  <- FindVariableFeatures(seurat_d0 , selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(seurat_d0)
+seurat_d0<- ScaleData(seurat_d0, features = all.genes)
+seurat_d0 <- RunPCA(seurat_d0, features = VariableFeatures(object = seurat_d0))
+ElbowPlot(seurat_d0, ndims=50)
+```
+
+
+```{r}
+ElbowPlot(seurat_d0, ndims=50)
+seurat_d0 <- FindNeighbors(seurat_d0, dims = 1:15)
+seurat_d0 <- FindClusters(seurat_d0, resolution = 0.5)
+seurat_d0 <- RunUMAP(seurat_d0, dims = 1:15,n.neighbors=5,min.dist=0.2)
+```
+
+
+```{r}
+cols_aml <-c('B'="lightgreen",'cDC'="green",'CTL'="pink",'earlyEry'="orange",'GMP'="purple",
+'HSC'="black",'lateEry'="#A93226",'Mono'="yellow",'NK'="darkblue",'pDC'="blue",
+'Plasma'="darkgreen",'ProB'="#4DD0E1",'Prog'="grey",'ProMono'="red",'T'="lightblue",
+'cDC-like'="#fde725",'GMP-like'="#fde725",'HSC-like'="#fde725",'Mono-like'="#fde725",
+'Prog-like'="#fde725",'ProMono-like'="#fde725")
+
+cols_aml2 <-c('B'="#440154",'cDC'="#440154",'CTL'="#440154",'earlyEry'="#440154",'GMP'="#440154",
+'HSC'="#440154",'lateEry'="#440154",'Mono'="#440154",'NK'="#440154",'pDC'="#440154",
+'Plasma'="#440154",'ProB'="#440154",'Prog'="#440154",'ProMono'="#440154",'T'="#440154",
+'cDC-like'="#fde725",'GMP-like'="#fde725",'HSC-like'="#fde725",'Mono-like'="#fde725",
+'Prog-like'="#fde725",'ProMono-like'="#fde725")
+
+DimPlot(seurat_d0 , reduction = "umap",group.by = "CellType", label=TRUE,cols = cols_aml) +
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+```
+
+
+```{r}
+DimPlot(seurat_d0 , reduction = "umap",group.by = "CellType", label=TRUE,cols = cols_aml2) +
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+```
+
+
+```{r}
+#c("GMP","Mono","Prog","cDC","HSC","ProMono","earlyEry","CTL","T","Plasma","ProB","NK","B","lateEry","pDC")
+vec_normal=c(seurat_d0$CellType =="GMP" | seurat_d0$CellType =="Mono" |seurat_d0$CellType =="Prog" |
+seurat_d0$CellType =="cDC" |seurat_d0$CellType =="HSC" |seurat_d0$CellType =="ProMono" |
+seurat_d0$CellType =="earlyEry" |seurat_d0$CellType =="CTL" |seurat_d0$CellType =="T" |
+seurat_d0$CellType =="Plasma" |seurat_d0$CellType =="ProB" |seurat_d0$CellType =="NK" |
+seurat_d0$CellType =="B" |seurat_d0$CellType =="lateEry" |seurat_d0$CellType =="pDC")
+DimPlot(seurat_d0 , reduction = "umap",group.by = "CellType",
+cells= vec_normal,label=TRUE,
+cols = cols_aml)+
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+```
+
+
+```{r}
+vec_aml=c(seurat_d0$CellType =="cDC-like" | seurat_d0$CellType =="GMP-like" |seurat_d0$CellType =="HSC-like" |
+seurat_d0$CellType =="Mono-like" |seurat_d0$CellType =="Prog-like" |seurat_d0$CellType =="ProMono-like" )
+
+DimPlot(seurat_d0 , reduction = "umap",cells= vec_aml,group.by = "CellType", label=TRUE) +
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+```
+
+
+```{r}
+FeaturePlot(seurat_d0, features="ACLY")+
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+```
+
+
+```{r}
+table(seurat_d0$CellType)
+
+unique(seurat_d0$CellType)
+```
+
+
+```{r}
+plot.list_d0 <- list()
+for (i in unique(x = seurat_d0$CellType)) {
+vec_cell= seurat_d0$CellType == i
+plot.list_d0[[i]] <- DimPlot(
+object = seurat_d0,
+reduction = "umap",
+#cols=
+cells= vec_cell) + NoLegend() +
+ggtitle(i) +
+scale_x_continuous(limits = c(-12, 15)) + scale_y_continuous(limits = c(-12, 15))
+}
+
+CombinePlots(plots = c(plot.list_d0[1], plot.list_d0[2], plot.list_d0[3], plot.list_d0[4],plot.list_d0[5],
+plot.list_d0[6], plot.list_d0[7], plot.list_d0[8], plot.list_d0[9],plot.list_d0[10],
+plot.list_d0[11], plot.list_d0[12],plot.list_d0[13],plot.list_d0[14],plot.list_d0[15],
+plot.list_d0[16], plot.list_d0[17],plot.list_d0[18],plot.list_d0[19],plot.list_d0[20],
+plot.list_d0[21]), ncol=5 )
+```
+
+
+```{r}
+VlnPlot(seurat_d0, features = "ACLY",group.by = "CellType",cols=my_cols)
+```
+
+
+```{r}
+VlnPlot(seurat_d0, features = "ACLY",group.by = "CellType",cols=my_cols,slot = "counts", log = TRUE)
+```
+
+# DX
+
+```{r}
+dirs_dx<- list.files("C:/Users/william desaintjean/Documents/van_galen_raw/AML/DX")
+dirs_dx<-split(dirs_dx, ceiling(seq_along(dirs_dx)/2))
+vec_seurat_dx <- c()
+vec_names_x <- c()
+for (i in dirs_dx) {
+  name<- read.table(text = i[1], sep = ".", as.is = TRUE)$V1
+  count<-paste("C:/Users/william desaintjean/Documents/van_galen_raw/AML/DX/", name,".dem.txt" ,sep = "")
+  anno<-paste("C:/Users/william desaintjean/Documents/van_galen_raw/AML/DX/", name,".anno.txt" ,sep = "")
+  count_tsv <- read_tsv(count) %>% column_to_rownames("Gene")
+  anno_tsv <-read_tsv(anno) %>% column_to_rownames("Cell")
+  object <- CreateSeuratObject(
+  count_tsv,
+  project = name,
+  assay = "RNA",
+  names.field = 1,
+  names.delim = "_",
+  meta.data = anno_tsv)
+  vec_seurat_dx <- append(vec_seurat_dx ,object)
+
+  vec_names_x <- append(vec_names_x,name)
+}
+```
+
+
+```{r}
+vec_seurat_dx
+```
+
+
+```{r}
+seurat_dx <- merge(x= vec_seurat_dx[[1]], y=c(x= vec_seurat_dx[2:19]),
+add.cell.ids = vec_names_x,
+project = "analyse_dx")
+seurat_dx
+```
+
+
+```{r}
+VlnPlot(seurat_dx, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+
+
+```{r}
+seurat_dx <- subset(seurat_dx, subset =  nFeature_RNA < 2500)
+VlnPlot(seurat_dx, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+
+
+```{r}
+seurat_dx <- NormalizeData(seurat_dx)
+seurat_dx  <- FindVariableFeatures(seurat_dx , selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(seurat_dx)
+seurat_dx <- ScaleData(seurat_dx, features = all.genes)
+seurat_dx <- RunPCA(seurat_dx, features = VariableFeatures(object = seurat_dx))
+ElbowPlot(seurat_dx, ndims=50)
+```
+
+
+```{r}
+seurat_dx <- FindNeighbors(seurat_dx, dims = 1:15)
+seurat_dx <- FindClusters(seurat_dx, resolution = 0.5)
+seurat_dx <- RunUMAP(seurat_dx, dims = 1:15,n.neighbors=5,min.dist=0.2)
+DimPlot(seurat_dx, reduction = "umap", group.by = "CellType",label=TRUE, cols =cols_aml2) +
+scale_x_continuous(limits = c(-10, 11)) + scale_y_continuous(limits = c(-10, 12))
+```
+
+
+```{r}
+vec_normal_dx=c(seurat_dx$CellType =="GMP" | seurat_dx$CellType =="Mono" |seurat_dx$CellType =="Prog" |
+seurat_dx$CellType =="cDC" |seurat_dx$CellType =="HSC" |seurat_dx$CellType =="ProMono" |
+seurat_dx$CellType =="earlyEry" |seurat_dx$CellType =="CTL" |seurat_dx$CellType =="T" |
+seurat_dx$CellType =="Plasma" |seurat_dx$CellType =="ProB" |seurat_dx$CellType =="NK" |
+seurat_dx$CellType =="B" |seurat_dx$CellType =="lateEry" |seurat_dx$CellType =="pDC")
+DimPlot(seurat_dx , reduction = "umap",group.by = "CellType",
+cells= vec_normal_dx,label=TRUE,cols = cols_aml)+
+scale_x_continuous(limits = c(-10, 11)) + scale_y_continuous(limits = c(-10, 12))
+vec_aml_dx=c(seurat_dx$CellType =="cDC-like" | seurat_dx$CellType =="GMP-like" |seurat_dx$CellType =="HSC-like" |
+seurat_dx$CellType =="Mono-like" |seurat_dx$CellType =="Prog-like" |seurat_dx$CellType =="ProMono-like" )
+```
+
+
+```{r}
+DimPlot(seurat_dx , reduction = "umap",cells= vec_aml_dx, group.by = "CellType", label=TRUE) +
+scale_x_continuous(limits = c(-10, 11)) + scale_y_continuous(limits = c(-10, 12))
+```
+
+
+```{r}
+FeaturePlot(seurat_dx, features="ACLY")+
+scale_x_continuous(limits = c(-10, 11)) + scale_y_continuous(limits = c(-10, 12))
+```
+
+
+```{r}
+table(seurat_dx$CellType)
+```
+
+
+```{r}
+plot.list_dx <- list()
+for (i in unique(x = seurat_dx$CellType)) {
+vec_cell= seurat_dx$CellType == i
+plot.list_dx[[i]] <- DimPlot(
+object = seurat_dx,
+reduction = "umap",
+cells= vec_cell) + NoLegend() +
+ggtitle(i) + scale_x_continuous(limits = c(-12, 10)) + scale_y_continuous(limits = c(-12, 10))
+}
+CombinePlots(plots = c(plot.list_dx[1], plot.list_dx[2], plot.list_dx[3], plot.list_dx[4],plot.list_dx[5],
+plot.list_dx[6], plot.list_dx[7], plot.list_dx[8], plot.list_dx[9],plot.list_dx[10],
+plot.list_dx[11], plot.list_dx[12],plot.list_dx[13],plot.list_dx[14],plot.list_dx[15],
+plot.list_dx[16], plot.list_dx[17],plot.list_dx[18],plot.list_dx[19],plot.list_dx[20],
+plot.list_dx[21]), ncol=5 )
+```
+
+
+```{r}
+VlnPlot(seurat_dx, features = "ACLY",group.by = "CellType",cols=my_cols)
+```
+
+
+```{r}
+VlnPlot(seurat_dx, features = "ACLY",group.by = "CellType",cols=my_cols,slot = "counts", log = TRUE)
+```
+
+#Analyses totales
+```{r}
+#Reload les 3 datasets:
+pbmc_combined <- merge(BM1, y = c(BM2,BM3,BM4,BM5_34p,BM5_34p38n),
+                       add.cell.ids = c("BM1", "BM2", "BM3","BM4","BM5_34p","BM5_34p38n"),
+                       project = "norm_analyse")
+
+seurat_d0 <- merge(x= vec_seurat_d0[[1]], y=c(x= vec_seurat_d0[2:16]),
+                   add.cell.ids = vec_names,
+                   project = "analyse_d0")
+
+seurat_dx <- merge(x= vec_seurat_dx[[1]], y=c(x= vec_seurat_dx[2:19]),
+                   add.cell.ids = vec_names_x,
+                   project = "analyse_dx")
+```
+
+
+```{r}
+list_3objects <- list(pbmc_combined,seurat_d0,seurat_dx)
+list_3objects  <- lapply(X = list_3objects , FUN = function(x) {
+x <- NormalizeData(x)
+x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+```
+
+
+```{r}
+features <- SelectIntegrationFeatures(object.list = list_3objects)
+immune.anchors <- FindIntegrationAnchors(object.list = list_3objects, anchor.features = features)
+```
+
+```{r}
+immune.combined <- IntegrateData(anchorset = immune.anchors)
+```
+
+```{r}
+data_set=c(rep("Normal", 7698), rep("D0", 15685),rep("Dx", 15027))
+immune.combined<-AddMetaData(immune.combined, data_set, col.name = "3group")
+immune.combined$X3group <- factor(x = immune.combined$X3group, levels = c("Normal", "D0","Dx"))
+levels(immune.combined$X3group)
+```
+
+```{r}
+immune.combined <- subset(immune.combined, subset =  nFeature_RNA < 2500)
+VlnPlot(immune.combined, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2)
+```
+
+```{r}
+DefaultAssay(immune.combined) <- "integrated"
+immune.combined <- ScaleData(immune.combined, verbose = FALSE)
+immune.combined <- RunPCA(immune.combined, npcs = 50, verbose = FALSE)
+ElbowPlot(immune.combined, ndims=50)
+```
+
+
+```{r}
+#immune.combined <- RunUMAP(immune.combined, reduction = "pca", dims = 1:10,n.neighbors=5,min.dist=0.2,n.components = 2)
+immune.combined <- RunUMAP(immune.combined, reduction = "pca", dims = 1:10)
+immune.combined <- FindNeighbors(immune.combined, reduction = "pca", dims = 1:10)
+immune.combined <- FindClusters(immune.combined, resolution = 0.5)
+```
+
+
+```{r, fig.height=9, fig.width=12}
+DimPlot(immune.combined, reduction = "umap",group.by = "CellType", label= TRUE, cols= cols_aml2)
+```
+
+
+```{r}
+limx=c(-15,15) #c(-13, 14)
+limy=c(-15,10) #c(-8, 15)
+```
+
+
+```{r}
+df_view<-immune.combined
+vec_normal_tot=c(df_view$CellType =="GMP" | df_view$CellType =="Mono" |df_view$CellType =="Prog" |
+df_view$CellType =="cDC" |df_view$CellType =="HSC" |df_view$CellType =="ProMono" |
+df_view$CellType =="earlyEry" |df_view$CellType =="CTL" |df_view$CellType =="T" |
+df_view$CellType =="Plasma" |df_view$CellType =="ProB" |df_view$CellType =="NK" |
+df_view$CellType =="B" |df_view$CellType =="lateEry" |df_view$CellType =="pDC")
+
+DimPlot(df_view , reduction = "umap",group.by = "CellType",
+cells= vec_normal_tot,label=TRUE,
+cols = cols_aml)+
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+```{r}
+vec_aml_tot=c(immune.combined$CellType =="cDC-like" |immune.combined$CellType =="GMP-like"
+|immune.combined$CellType =="HSC-like" |immune.combined$CellType =="Mono-like"
+|immune.combined$CellType =="Prog-like" |immune.combined$CellType =="ProMono-like" )
+
+DimPlot(immune.combined , reduction = "umap",cells= vec_aml_tot,group.by = "CellType", label=TRUE) +
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+vir1=c("#440154","#21918c", "#fde725")
+```
+
+
+```{r}
+FeaturePlot(immune.combined, features="ACLY")+
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+#?FeaturePlot
+```
+
+
+```{r}
+df_view<-immune.combined
+vec_normal_tot=c(df_view$CellType =="GMP" | df_view$CellType =="Mono" |df_view$CellType =="Prog" |
+df_view$CellType =="cDC" |df_view$CellType =="HSC" |df_view$CellType =="ProMono" |
+df_view$CellType =="earlyEry" |df_view$CellType =="CTL" |df_view$CellType =="T" |
+df_view$CellType =="Plasma" |df_view$CellType =="ProB" |df_view$CellType =="NK" |
+df_view$CellType =="B" |df_view$CellType =="lateEry" |df_view$CellType =="pDC")
+DimPlot(df_view , reduction = "umap",group.by = "CellType",
+cells= vec_normal_tot,label=TRUE,
+cols = cols_aml)+
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+
+
+
+```{r}
+df_view<-immune.combined
+vec_normal_tot=c(df_view$CellType =="GMP" | df_view$CellType =="Mono" |df_view$CellType =="Prog" |
+df_view$CellType =="cDC" |df_view$CellType =="HSC" |df_view$CellType =="ProMono" |
+df_view$CellType =="earlyEry" |df_view$CellType =="CTL" |df_view$CellType =="T" |
+df_view$CellType =="Plasma" |df_view$CellType =="ProB" |df_view$CellType =="NK" |
+df_view$CellType =="B" |df_view$CellType =="lateEry" |df_view$CellType =="pDC")
+DimPlot(df_view , reduction = "umap",group.by = "CellType",
+cells= vec_normal_tot,label=TRUE,
+cols = cols_aml)+
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+
+
+
+```{r}
+df_view<-immune.combined
+vec_normal_tot=c(df_view$CellType =="GMP" | df_view$CellType =="Mono" |df_view$CellType =="Prog" |
+df_view$CellType =="cDC" |df_view$CellType =="HSC" |df_view$CellType =="ProMono" |
+df_view$CellType =="earlyEry" |df_view$CellType =="CTL" |df_view$CellType =="T" |
+df_view$CellType =="Plasma" |df_view$CellType =="ProB" |df_view$CellType =="NK" |
+df_view$CellType =="B" |df_view$CellType =="lateEry" |df_view$CellType =="pDC")
+DimPlot(df_view , reduction = "umap",group.by = "CellType",
+cells= vec_normal_tot,label=TRUE,label.color= "brown",
+cols = cols_aml)+
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+```{r}
+vec_aml_tot=c(immune.combined$CellType =="cDC-like" |immune.combined$CellType =="GMP-like"
+|immune.combined$CellType =="HSC-like" |immune.combined$CellType =="Mono-like"
+|immune.combined$CellType =="Prog-like" |immune.combined$CellType =="ProMono-like" )
+DimPlot(immune.combined , reduction = "umap",cells= vec_aml_tot,group.by = "CellType", label=TRUE,
+label.color= "brown") +
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+
+
+
+```{r}
+VlnPlot(immune.combined, features ="ACLY", split.by = "X3group", group.by = "CellType")
+```
+
+
+```{r}
+FeaturePlot(immune.combined, features = "ACLY", split.by = "X3group")#+
+#scale_x_continuous(limits = c(-13, 14)) + scale_y_continuous(limits = c(-8, 15))
+```
+
+
+```{r}
+VlnPlot(immune.combined, features ="ACLY",split.by = "X3group", group.by = "CellType")
+```
+
+
+
+
+```{r}
+DimPlot(immune.combined , reduction = "umap",split.by = "X3group",group.by = "CellType", label=FALSE,cols=cols_aml2) +
+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+
+
+```{r}
+immune.combined$vec_2cat <- recode(immune.combined$CellType,
+"B" = "Normal",
+"cDC" = "Normal",
+"cDC-like" = "AML",
+"CTL" = "Normal",
+"earlyEry" = "Normal",
+"GMP" = "Normal",
+"GMP-like" = "AML",
+"HSC" = "Normal",
+"HSC-like" = "AML",
+"lateEry" = "Normal",
+"Mono" = "Normal",
+"Mono-like" = "AML",
+"NK" = "Normal",
+"pDC" = "Normal",
+"Plasma" = "Normal",
+"ProB" = "Normal",
+"Prog" = "Normal",
+"Prog-like" = "AML",
+"ProMono" = "Normal",
+"ProMono-like" = "AML",
+"T" = "Normal")
+
+table(immune.combined$CellType)
+table(immune.combined$vec_2cat)
+```
+
+
+```{r}
+FeaturePlot(immune.combined, features = vec_top_corr_aml[1:2], split.by = "vec_2cat",
+max.cutoff = 3)+scale_x_continuous(limits = limx) + scale_y_continuous(limits = limy)
+```
+
+
+
+# Signature
+
+## Signature totale
+```{r}
+#matrice de comptage
+mat_count_sc<-immune.combined@assays$RNA@counts
+mat_count_sc
+
+df_counts<-data.frame(mat_count_sc)
+df_counts
+```
+
+
+
+```{r}
+# tableau de corrélations et vecteur
+load("omni_total_sign.rda")
+load("correlation_corces_total.rda")
+
+```
+
+
+```{r}
+func_signature <- function(vec_genes, mat_vst,vec_correlation){
+  vec_final<- c()
+  for (i in colnames(mat_vst)){
+    vec_sign <- c()
+    for (j in vec_genes){
+      vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+    }
+    vec_final<-append(vec_final,mean(vec_sign))
+  }
+  return(vec_final)
+}
+```
+
+
+```{r}
+
+vec_sign_tot<-func_signature(omni_total_sign,df_counts,correlation_corces_total)
+```
+
+
+
+```{r}
+vec_sign_tot_vg<-vec_sign_tot
+save(vec_sign_tot_vg, file = "vec_sign_tot_vg.rda")
+```
+
+
+```{r}
+load("vec_sign_tot_vg.rda")
+quantile(vec_sign_tot_vg, c(0,.33, .66,1))
+
+```
+```{r}
+vec_sign_tot_vg_cat<- cut(vec_sign_tot_vg,
+                       breaks=c(-1, -0.0002953733, 0.0410877611 , 1),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(vec_sign_tot_vg_cat)
+```
+
+
+
+
+
+```{r}
+immune.combined<-AddMetaData(immune.combined,vec_sign_tot_vg_cat, col.name = "sign_tot")
+```
+
+
+
+
+```{r, fig.height=9, fig.width=12}
+DimPlot(immune.combined , reduction = "umap",group.by = "sign_tot",cols=vir1)
+```
+
+```{r,fig.height=9, fig.width=12}
+immune.combined<-AddMetaData(immune.combined,vec_sign_tot_vg, col.name = "sign_tot_continue")
+VlnPlot(immune.combined, features ="sign_tot_continue", group.by = "CellType")
+```
+
+## signature AML
+
+
+```{r}
+# tableau de corrélations et vecteur
+load("omni_aml_tot.rda")
+load("correlation_corces_aml.rda")
+```
+
+```{r}
+vec_sign_aml_vg<-func_signature(omni_aml_tot,df_counts,correlation_corces_aml)
+
+```
+
+```{r}
+save(vec_sign_aml_vg, file = "vec_sign_aml_vg.rda")
+```
+
+```{r}
+load("vec_sign_aml_vg.rda")
+quantile(vec_sign_aml_vg, c(0,.33, .66,1))
+
+```
+
+```{r}
+vec_sign_aml_vg_cat<- cut(vec_sign_aml_vg,
+                       breaks=c(-1, 0.0406505 , 0.1217556 , 2),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(vec_sign_aml_vg_cat)
+```
+
+```{r}
+immune.combined<-AddMetaData(immune.combined,vec_sign_aml_vg_cat, col.name = "sign_aml")
+```
+
+
+```{r,fig.height=9, fig.width=12}
+DimPlot(immune.combined , reduction = "umap",group.by = "sign_aml",cols=vir1)
+```
+
+```{r,fig.height=9, fig.width=12}
+immune.combined<-AddMetaData(immune.combined,vec_sign_aml_vg, col.name = "sign_aml_continue")
+VlnPlot(immune.combined, features ="sign_aml_continue", group.by = "CellType")
+```
+
+
+## signature LSC
+
+```{r}
+#install.packages("foreach")
+library(foreach)
+```
+```{r}
+library(doParallel)
+
+detectCores()
+totalCores = 11
+
+cluster <- makeCluster(totalCores) 
+registerDoParallel(cluster)
+```
+
+
+
+
+```{r}
+load("omni_LSC_tot.rda")
+load("correlation_corces_lsc.rda")
+
+```
+
+```{r}
+stopCluster(cluster)
+```
+
+```{r}
+# func_signature_para <- function(vec_genes, mat_vst,vec_correlation){
+#   vec_final<- c()
+#   for (i in colnames(mat_vst)){
+#     vec_sign <- c()
+#     foreach (j = vec_genes) %dopar%{
+#       vec_sign<-append(vec_sign, mat_vst[j,i]*vec_correlation[j,"V1"])
+#     }
+#     vec_final<-append(vec_final,mean(vec_sign))
+#   }
+#   return(vec_final)
+# }
+```
+
+```{r}
+vec_sign_lsc<-func_signature(omni_LSC_tot,df_counts,correlation_corces_lsc)
+save(vec_sign_lsc, file = "vec_sign_lsc.rda")
+```
+
+```{r}
+load("vec_sign_lsc.rda")
+quantile(vec_sign_lsc, c(0,.33, .66,1))
+```
+
+```{r}
+vec_sign_lsc_vg_cat<- cut(vec_sign_lsc,
+                       breaks=c(-1, 0.009908712 ,0.034215737  , 2),
+                       labels=c('LOW', 'MEDIUM', 'HIGH'))
+table(vec_sign_lsc_vg_cat)
+```
+
+```{r}
+immune.combined<-AddMetaData(immune.combined,vec_sign_lsc_vg_cat, col.name = "sign_lsc")
+```
+
+
+```{r ,fig.height=9, fig.width=12}
+DimPlot(immune.combined , reduction = "umap",group.by = "sign_lsc",cols=vir1)
+```
+
+```{r,fig.height=9, fig.width=12}
+immune.combined<-AddMetaData(immune.combined,vec_sign_lsc, col.name = "sign_lsc_continue")
+VlnPlot(immune.combined, features ="sign_lsc_continue", group.by = "CellType")
+```
+
+
+
+
+
+
+

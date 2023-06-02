@@ -1,0 +1,448 @@
+---
+title: "analyses différentielles corces"
+author: "wd"
+date: "2023-04-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center",
+               fig.retina = 2,
+               fig.width = 10,
+			         fig.height=7,
+               cache = T,
+               cache.lazy = F,
+               echo = FALSE,
+               message = FALSE,
+               warning=FALSE)
+
+```
+
+```{r librairies, echo=FALSE, warning=FALSE}
+library(readr)
+library(tidyverse)
+#install.packages("ggtext")
+library(ggtext)
+#install.packages("corrplot")
+library(corrplot)
+#install.packages("circlize")
+library(circlize)
+#install.packages("viridis")
+#install.packages("ggrepel")
+library(ggrepel)
+library(viridis)
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+#BiocManager::install("apeglm")
+#BiocManager::install("ComplexHeatmap")
+#BiocManager::install("Hmisc")
+
+#install.packages("DESeq2")
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(Hmisc)
+
+if (!require(devtools)) install.packages("devtools")
+devtools::install_github("gaospecial/ggVennDiagram")
+library("ggVennDiagram")
+
+#BiocManager::install("BiocParallel")
+library(BiocParallel)
+
+theme_set(theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+                         )
+custom_theme <- theme_bw() +
+        theme(
+        plot.title = element_text(size=20, face="bold"),
+        axis.text = element_text(size=16, color="black"), 
+        axis.title = element_text(size=18,face="bold"),
+        legend.title = element_text(size=18,face="bold"),
+        strip.text.x = element_text(size = 16, face = "bold"),
+        legend.text = element_text(size = 16),
+        legend.position = "right")
+
+```
+
+# Data importation 
+
+Analyse des données de la publication corces:
+https://sci-hub.hkvisa.net/10.1038/ng.3646 
+
+```{r data_import}
+
+##import comptages
+corces <- read_tsv("D:/AML_processed_data/RNAseq/raw_counts/Corces_HTseq_All_genes_raw.tsv") %>% column_to_rownames("Gene_ID")
+
+##import metadata
+
+metadata_corces <- read_tsv("D:/AML_processed_data/RNAseq/clinical_data/Corces_Clinical_runtable_modified.txt") %>%
+  column_to_rownames("Sample_ID")
+
+genecode_gtf <- read_delim("C:/Users/william desaintjean/Documents/Gencode_v33_allgenes_names_corresp.txt",col_names=FALSE) %>% column_to_rownames("X1")
+genecode_gtf <- genecode_gtf[-1,] 
+
+#test_inter<-intersect(rownames(genecode_gtf), rownames(corces))
+#Tous les rownames intersect bien
+
+corces_v2 <- merge(genecode_gtf,corces,by = 'row.names', all = FALSE)
+corces_v2  <- corces_v2 [,-1] 
+corces_v2  <- corces_v2 [,-2] 
+
+#table(duplicated(corces_v2$X2)) 
+#FALSE  TRUE 
+#60583    79 
+
+#i <- colnames(corces_v2) 
+#corces_v2[ , i] <- apply(corces_v2[ , i], 2,function(x) as.integer(x))
+
+#sum
+corces_v2<- aggregate( x= corces_v2[,2:82] ,by= list(corces_v2$X2),FUN=sum)
+
+#supression des doublons
+#corces_v2 <-  distinct(corces_v2,X2, .keep_all = TRUE)  #pour l'instant: supression des doublons de nomde gènes, voir pour addition
+
+rownames(corces_v2) <- corces_v2$Group.1
+corces_v2 <- corces_v2[,-1]
+
+
+inter_data<-intersect(colnames(corces_v2),rownames(metadata_corces))
+
+
+```
+
+
+# General review of cell types in the data Corces {.tabset}
+
+```{r}
+
+
+vec_cell <-c("Blast","LSC","CLP","Ery","LMPP","CMP" ,"GMP","HSC","MEP","MPP","Bcell","CD4Tcell","CD8Tcell","Mono","NKcell","pHSC")
+
+
+metadata_corces$cell_subtype <-  factor(metadata_corces$cell_subtype, levels =c("Blast","LSC","CLP","Ery","LMPP","CMP" ,"GMP","HSC","MEP","MPP","Bcell","CD4Tcell","CD8Tcell","Mono","NKcell","pHSC"))
+
+```
+
+```{r}
+library(parallel)
+detectCores()
+```
+
+
+
+
+```{r}
+# verion avec 2 dataframe vide au départ
+
+df_all_subcell<-data.frame(matrix(nrow = 16, ncol = 16))
+colnames(df_all_subcell)<-vec_cell
+rownames(df_all_subcell)<-vec_cell
+
+df_fold_change<-data.frame(matrix(nrow = 16, ncol = 16))
+colnames(df_fold_change)<-vec_cell
+rownames(df_fold_change)<-vec_cell
+```
+
+```{r}
+
+data_deseq <- corces_v2[,inter_data]
+meta_deseq <- metadata_corces[inter_data,]
+```
+
+```{r fuction 16, echo=FALSE, warning=FALSE}
+#register(MulticoreParam(workers=12))
+
+for (i in colnames(df_all_subcell)){
+  #changer levels pour mettre i en premier
+  vec_levels<-union(i,colnames(df_all_subcell))
+  #print(vec_levels)
+  meta_deseq$cell_subtype <-  factor(meta_deseq$cell_subtype, levels = vec_levels)
+
+  dds_sub <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq, design = ~ cell_subtype )
+  keep <- rowSums(counts(dds_sub)) >= 10
+  dds_sub<- dds_sub[keep,]
+  dds_sub <- DESeq(dds_sub, parallel=TRUE, BPPARAM=SnowParam(workers =12))
+
+  for (j in colnames(df_all_subcell)){
+    #boucle pour calculer pour tout les coeffs avec le même en seconde pos
+    if(i==j){
+      df_all_subcell[i,j]<-1
+      df_fold_change[i,j]<-0
+    # }else if( !is.na(df_all_subcell[j,i])){
+    #   df_all_subcell[i,j]<-df_all_subcell[j,i]
+    #   df_fold_change[i,j]<- df_fold_change[j,i]
+    }else{
+      coef_today<-sprintf("cell_subtype_%s_vs_%s",j,i)
+      res_sub <- lfcShrink(dds_sub, coef=coef_today, type="apeglm", parallel=TRUE, BPPARAM=SnowParam(workers =12))
+      df_all_subcell[i,j]<-res_sub["ACLY",5]
+      df_fold_change[i,j]<-res_sub["ACLY",2]
+      #print(df_all_subcell[i,j])
+    }
+   #View(df_all_subcell)
+   #View(df_fold_change)
+  }
+}
+
+##A faire:
+# Au  lieu de mettre que la p-adj, mettre toute la ligne ACly pour avoir aussi le fold change
+# Rappel heatmap final: couleur= fold change, symbol sur croisement p-value<0.05
+#changer la diagonle de 0, au pire mettre c(0,0,0,0,0), car ligne ACLY a 5 valeurs
+#Faire vrai parallélisation
+
+```
+
+
+
+```{r 16_subtypes_dds}
+# 
+# data_deseq <- corces_v2[,inter_data]
+# meta_deseq <- metadata_corces[inter_data,]
+# 
+# dds_sub <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ cell_subtype )
+# 
+# # filtration
+# keep <- rowSums(counts(dds_sub)) >= 10
+# dds_sub<- dds_sub[keep,]
+# 
+# dds_sub <- DESeq(dds_sub)
+```
+
+
+```{r}
+
+# resultsNames(dds_sub)
+```
+
+```{r}
+# res_sub <- lfcShrink(dds_sub, coef=2, type="apeglm")
+# 
+# res_sub["ACLY",5]
+# res_sub["ACLY",]
+```
+
+```{r}
+save(df_all_subcell, file = "df_all_subcell.rda")
+save(df_fold_change, file = "df_fold_change.rda")
+```
+
+
+
+```{r boxplot_16_subtypes}
+# boxplot avec vst
+# matrix_subtype <-getVarianceStabilizedData(dds_sub)
+# 
+# df_acly_subtype=data.frame(matrix_subtype["ACLY",],meta_deseq[,"cell_subtype"])
+# 
+# ggplot(df_acly_subtype, aes(x=df_acly_subtype[,2], y=df_acly_subtype[,1],fill=df_acly_subtype[,2])) +
+#   geom_boxplot() +
+#   scale_x_discrete(limits=c("HSC","MPP","LMPP","CMP","GMP","MEP","Mono","Ery","CLP","CD4Tcell","CD8Tcell","Bcell","NKcell","Blast","LSC","pHSC")) +
+#   scale_fill_manual(values=c("orchid2","#F8766D","dodgerblue3","navyblue","skyblue1","tan1","tomato4","darkorange1","darkgreen","darkcyan","#E69F00","red1","firebrick3","springgreen3","purple4","forestgreen")) +
+#   geom_jitter(width = 0.3) +
+#   theme(axis.text=element_text(size=6)) +
+#   theme(plot.title=element_text(size=14)) +
+#   theme(axis.title=element_text(size=12)) +
+#   theme(legend.title=element_text(size=10), legend.text=element_text(size=8)) +
+#   theme(axis.text.x = element_markdown(face="bold",size=10,color= c("lightgreen","lightgreen","lightgreen","lightgreen","lightgreen","lightgreen",
+#   "lightgreen","lightgreen","lightblue","lightblue","lightblue","lightblue",
+#   "lightblue","#fde725","#fde725","#fde725"))) +
+#   labs(title = "Boxplot of vst nomalized count",
+#        x = "Cell type", y = "DESEQ VST", fill = "Cell type")
+
+```
+
+
+
+## 4cat
+
+#modifier pour avoir matrice 4*4
+```{r}
+table(metadata_corces$cell_type_4cat_BMPB)
+vec_4cat <-c("Normal_BM","Normal_PB","pHSC","AML")
+```
+
+```{r}
+df_4cat_p_val<-data.frame(matrix(nrow = 4, ncol = 4))
+colnames(df_4cat_p_val)<-vec_4cat
+rownames(df_4cat_p_val)<-vec_4cat
+
+df_4cat_fc<-data.frame(matrix(nrow = 4, ncol = 4))
+colnames(df_4cat_fc)<-vec_4cat
+rownames(df_4cat_fc)<-vec_4cat
+```
+
+```{r}
+
+data_deseq <- corces_v2[,inter_data]
+meta_deseq <- metadata_corces[inter_data,]
+```
+
+
+```{r}
+for (i in colnames(df_4cat_p_val)){
+  #changer levels pour mettre i en premier
+  vec_levels<-union(i,colnames(df_4cat_p_val))
+  #print(vec_levels)
+  meta_deseq$cell_type_4cat_BMPB <-  factor(meta_deseq$cell_type_4cat_BMPB, levels = vec_levels)
+
+  dds_sub <- DESeqDataSetFromMatrix(countData = data_deseq, colData = meta_deseq,design = ~ cell_type_4cat_BMPB )
+  keep <- rowSums(counts(dds_sub)) >= 10
+  dds_sub<- dds_sub[keep,]
+  dds_sub <- DESeq(dds_sub, parallel=TRUE, BPPARAM=SnowParam(workers =12))
+
+  for (j in colnames(df_4cat_p_val)){
+    #boucle pour calculer pour tout les coeffs avec le même en seconde pos
+    if(i==j){
+      df_4cat_p_val[i,j]<-1 
+      df_4cat_fc[i,j]<-0
+    # }else if( !is.na(df_4cat_p_val[j,i])){
+    #   df_4cat_p_val[i,j]<-df_4cat_p_val[j,i]
+    #   df_4cat_fc[i,j]<-df_4cat_fc[j,i]
+    }else{
+      coef_today<-sprintf("cell_type_4cat_BMPB_%s_vs_%s",j,i)
+      res_sub <- lfcShrink(dds_sub, coef=coef_today, type="apeglm", parallel=TRUE, BPPARAM=SnowParam(workers =12))
+      df_4cat_p_val[i,j]<-res_sub["ACLY",5]
+      df_4cat_fc[i,j]<-res_sub["ACLY",2]
+    }
+    #print(coef_today)
+  }
+}
+```
+
+```{r}
+save(df_4cat_p_val, file = "df_4cat_p_val.rda")
+save(df_4cat_fc, file = "df_4cat_fc.rda")
+```
+
+
+# heatmap
+
+## 16cat
+
+
+```{r}
+load("df_all_subcell.rda")
+load("df_fold_change.rda")
+
+```
+
+```{r}
+# for (i in colnames(df_all_subcell)){
+#   for (j in colnames(df_all_subcell)){
+#     if(i==j){
+#       df_all_subcell[i,j]<-1
+#       df_fold_change[i,j]<-0
+#     }
+#     if(df_fold_change[i,j]<0){
+#       df_fold_change[i,j]<-df_fold_change[i,j]*-1
+# 
+#     }
+#   }
+# }
+
+#Mettre le Fold change à 0 et la p-value à 1 poour les diags
+
+```
+
+```{r}
+color_vincent <- colorRampPalette(c('#3361A5',
+                                    '#248AF3',
+                                    '#14B3FF',
+                                    '#88CEEF',
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+vec_cell_type=c("HSC","MPP","LMPP","CMP","GMP","MEP","Mono","Ery","CLP","CD4Tcell","CD8Tcell",
+                "Bcell","NKcell","Blast","LSC","pHSC")
+
+
+Heatmap(df_fold_change, name = "Log2FoldChange",  col = color_vincent,
+        row_order = vec_cell_type,
+        column_order =vec_cell_type ,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+        if(df_all_subcell[i, j] <0.05 & df_all_subcell[i, j] >0.01 )
+            grid.text(sprintf("%s", "*"), x, y, gp = gpar(fontsize = 20))
+        if(df_all_subcell[i, j] <0.01)
+            grid.text(sprintf("%s", "**"), x, y, gp = gpar(fontsize = 20))
+          
+})
+```
+
+```{r}
+color_vincent2 <- colorRampPalette(c(
+                    
+                                    '#C1D5DC',
+                                    '#EAD397',
+                                    '#FDB31A',
+                                    '#E42A2A',
+                                    '#A31D1D'))(100)
+
+vec_cell_type=c("HSC","MPP","LMPP","CMP","GMP","MEP","Mono","Ery","CLP","CD4Tcell","CD8Tcell",
+                "Bcell","NKcell","Blast","LSC","pHSC")
+
+
+Heatmap(df_fold_change, name = "Log2FoldChange",  col = color_vincent2,
+        row_order = vec_cell_type,
+        column_order =vec_cell_type ,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+        if(df_all_subcell[i, j] <0.05 & df_all_subcell[i, j] >0.01 )
+            grid.text(sprintf("%s", "*"), x, y, gp = gpar(fontsize = 20))
+        if(df_all_subcell[i, j] <0.01)
+            grid.text(sprintf("%s", "**"), x, y, gp = gpar(fontsize = 20))
+          
+})
+```
+
+## 4cat
+
+
+```{r}
+load("df_4cat_p_val.rda")
+load("df_4cat_fc.rda")
+```
+
+
+```{r}
+# for (i in colnames(df_4cat_fc)){
+#   for (j in colnames(df_4cat_fc)){
+#     if(df_4cat_fc[i,j]<0){
+#       df_4cat_fc[i,j]<-df_4cat_fc[i,j]*-1
+# 
+#     }
+#   }
+# }
+
+```
+
+
+```{r}
+vec_4_cat_order<-c("Normal_BM","Normal_PB","pHSC","AML")
+
+Heatmap(df_4cat_fc, name = "Log2FoldChange",  col = color_vincent,
+        row_order = vec_4_cat_order,
+        column_order =vec_4_cat_order ,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+        if(df_4cat_p_val[i, j] <0.05 & df_all_subcell[i, j] >0.01 )
+            grid.text(sprintf("%s", "*"), x, y, gp = gpar(fontsize = 60))
+        if(df_4cat_p_val[i, j] <0.01)
+            grid.text(sprintf("%s", "**"), x, y, gp = gpar(fontsize = 60))
+})
+```
+
+
+
+
